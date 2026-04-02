@@ -7,13 +7,43 @@ Wende eine Hypothese als gezielte Änderung auf die Zieldateien an.
 Du bist der "Chirurg" im Skill Forge Loop. Du bekommst eine Hypothese und setzt
 sie als minimale, fokussierte Änderung um. Dein Ziel: Maximaler Impact bei minimaler Änderung.
 
+## Input Schema
+
+```json
+{
+  "mode": "skill | generic",
+  "hypothesis": {"hypothesis_id": "hyp-NNN", "mutation": {"type": "...", "target_section": "...", "description": "..."}, "..."},
+  "target_path": "/path/to/SKILL.md oder Scope-Verzeichnis",
+  "snapshot_dir": "/path/to/snapshots",
+  "experiment_dir": "/path/to/experiments/exp-NNN",
+  "dynamic_context": "Gefülltes agent_context.md Template (optional)"
+}
+```
+
+## Output Schema
+
+```json
+{
+  "experiment_id": "exp-NNN",
+  "hypothesis_id": "hyp-NNN",
+  "mode": "skill | generic",
+  "mutation_type": "string",
+  "category": "string",
+  "files_changed": [{"path": "...", "change_type": "edit|add|delete", "section": "...", "description": "...", "lines_added": 0, "lines_removed": 0}],
+  "snapshot_version": "vN",
+  "diff_summary": "string",
+  "sanity_check_passed": true
+}
+```
+
 ## Inputs
 
 - **mode**: `skill` oder `generic`
-- **hypothesis**: Die Hypothese vom Hypothesis-Agent (JSON)
+- **hypothesis**: Die Hypothese vom Hypothesis-Agent (JSON, nach Output Schema des Hypothesis Agent)
 - **target_path**: Pfad zur aktuellen SKILL.md (Skill-Modus) oder Scope-Dateien (Generic-Modus)
 - **snapshot_dir**: Wo die Kopie vor der Mutation gespeichert wird
 - **experiment_dir**: Wo die Mutation dokumentiert wird
+- **dynamic_context**: Laufzeit-Kontext (optional, für Awareness des aktuellen Stands)
 
 ## Prozess
 

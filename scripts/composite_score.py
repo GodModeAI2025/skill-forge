@@ -13,6 +13,8 @@ Unterstützt zwei Modi:
 Schreibt Ergebnisse sowohl als JSON als auch als TSV-Zeile.
 """
 
+from __future__ import annotations
+
 import argparse
 import csv
 import json
@@ -394,6 +396,224 @@ def score_from_experiment_dir(experiment_dir: str, use_comparator: bool = False)
     }
 
 
+# ─── Tiered History ──────────────────────────────────────────────────────
+
+
+def compact_history(history_path: str, detailed_keep: int = 5) -> dict:
+    """Komprimiere alte History-Einträge zu Kurzform.
+
+    Behält die letzten `detailed_keep` Experimente vollständig,
+    ältere werden auf Kernfelder reduziert. Verhindert Context-Overflow
+    bei langen Experiment-Runs (>10 Experimente).
+    """
+    path = Path(history_path)
+    if not path.exists():
+        return {}
+
+    with open(path, "r") as f:
+        history = json.load(f)
+
+    experiments = history.get("experiments", [])
+    if len(experiments) <= detailed_keep:
+        return history
+
+    # Ältere Einträge komprimieren
+    compacted = []
+    for exp in experiments[:-detailed_keep]:
+        compacted.append({
+            "id": exp["id"],
+            "version": exp.get("version"),
+            "category": exp.get("category"),
+            "composite_score": exp.get("composite_score"),
+            "delta": exp.get("delta"),
+            "decision": exp.get("decision"),
+            "timestamp": exp.get("timestamp"),
+            "_compacted": True,
+        })
+
+    # Letzte N Einträge behalten
+    detailed = experiments[-detailed_keep:]
+
+    history["experiments"] = compacted + detailed
+    history["_compaction_info"] = {
+        "compacted_count": len(compacted),
+        "detailed_count": len(detailed),
+        "last_compaction": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+    with open(path, "w") as f:
+        json.dump(history, f, indent=2)
+
+    return history
+
+
+def get_history_for_agent(history_path: str, detailed_keep: int = 5) -> dict:
+    """Liefere eine agent-optimierte Sicht auf die History.
+
+    Vollständige Details nur für die letzten N Experimente,
+    ältere als kompakte Zusammenfassung. Ideal als Input
+    für den Hypothesis Agent.
+    """
+    path = Path(history_path)
+    if not path.exists():
+        return {"experiments_detailed": [], "experiments_summary": [], "stats": {}}
+
+    with open(path, "r") as f:
+        history = json.load(f)
+
+    experiments = history.get("experiments", [])
+
+    summary = []
+    detailed = []
+
+    for exp in experiments:
+        if exp.get("_compacted"):
+            summary.append(exp)
+        else:
+            if len(experiments) - experiments.index(exp) <= detailed_keep:
+                detailed.append(exp)
+            else:
+                summary.append({
+                    "id": exp["id"],
+                    "category": exp.get("category"),
+                    "delta": exp.get("delta"),
+                    "decision": exp.get("decision"),
+                })
+
+    # Statistiken für schnellen Überblick
+    all_exps = experiments
+    keeps = sum(1 for e in all_exps if e.get("decision") == "KEEP")
+    reverts = sum(1 for e in all_exps if e.get("decision") == "REVERT")
+    best_delta = max((e.get("delta", 0) for e in all_exps), default=0)
+
+    return {
+        "experiments_detailed": detailed,
+        "experiments_summary": summary,
+        "stats": {
+            "total": len(all_exps),
+            "keeps": keeps,
+            "reverts": reverts,
+            "best_delta": best_delta,
+            "current_best": history.get("current_best"),
+            "best_score": history.get("best_score"),
+        },
+    }
+
+
+# ─── Checkpoint/Resume ────────────────────────────────────────────────────
+
+
+def save_checkpoint(workspace_path: str, experiment_id: str,
+                    baseline_score: float, coverage_state: dict,
+                    next_category: str | None = None) -> dict:
+    """Speichere einen Resume-Point nach jedem Experiment.
+
+    Ermöglicht Unterbrechung und Fortsetzung über Sessions hinweg.
+
+    Args:
+        workspace_path: Pfad zum Skill-Forge Workspace
+        experiment_id: ID des zuletzt abgeschlossenen Experiments
+        baseline_score: Aktueller Baseline-Score
+        coverage_state: Aktueller Coverage-Matrix-Zustand
+        next_category: Geplante nächste Kategorie (optional)
+    """
+    checkpoint = {
+        "last_completed_experiment": experiment_id,
+        "current_baseline_score": baseline_score,
+        "coverage_snapshot": coverage_state.get("coverage_summary", {}),
+        "next_planned_category": next_category,
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "resumable": True,
+    }
+
+    checkpoint_path = Path(workspace_path) / "checkpoint.json"
+    with open(checkpoint_path, "w") as f:
+        json.dump(checkpoint, f, indent=2)
+
+    return checkpoint
+
+
+def load_checkpoint(workspace_path: str) -> dict | None:
+    """Lade den letzten Checkpoint für Resume.
+
+    Returns:
+        Checkpoint-Dict oder None wenn kein Checkpoint existiert.
+    """
+    checkpoint_path = Path(workspace_path) / "checkpoint.json"
+    if not checkpoint_path.exists():
+        return None
+
+    with open(checkpoint_path, "r") as f:
+        return json.load(f)
+
+
+def get_resume_info(workspace_path: str) -> str:
+    """Erzeuge eine menschenlesbare Resume-Info."""
+    checkpoint = load_checkpoint(workspace_path)
+    if checkpoint is None:
+        return "Kein Checkpoint vorhanden — frischer Start."
+
+    return (
+        f"Resume von Checkpoint:\n"
+        f"  Letztes Experiment: {checkpoint['last_completed_experiment']}\n"
+        f"  Baseline-Score: {checkpoint['current_baseline_score']:.4f}\n"
+        f"  Coverage: {checkpoint['coverage_snapshot'].get('coverage_percent', 0):.0f}%\n"
+        f"  Gespeichert: {checkpoint['timestamp']}\n"
+        f"  Nächste Kategorie: {checkpoint.get('next_planned_category', 'auto')}"
+    )
+
+
+# ─── Context-Grouping ────────────────────────────────────────────────────
+
+
+def group_history_by_category(history_path: str) -> dict:
+    """Gruppiere Experiment-History nach Kategorien statt chronologisch.
+
+    Ideal als Input für den Hypothesis Agent: Pro Kategorie sieht er
+    die beste Mutation, häufigste Failure-Patterns und Saturation-Status.
+    """
+    path = Path(history_path)
+    if not path.exists():
+        return {}
+
+    with open(path, "r") as f:
+        history = json.load(f)
+
+    grouped = {}
+    for exp in history.get("experiments", []):
+        cat = exp.get("category", "unknown")
+        if cat not in grouped:
+            grouped[cat] = {
+                "experiments": [],
+                "total": 0,
+                "keeps": 0,
+                "reverts": 0,
+                "best_delta": None,
+                "best_experiment": None,
+            }
+
+        g = grouped[cat]
+        g["experiments"].append({
+            "id": exp["id"],
+            "delta": exp.get("delta", 0),
+            "decision": exp.get("decision"),
+            "hypothesis": exp.get("hypothesis", "")[:80],
+        })
+        g["total"] += 1
+
+        if exp.get("decision") == "KEEP":
+            g["keeps"] += 1
+        elif exp.get("decision") == "REVERT":
+            g["reverts"] += 1
+
+        delta = exp.get("delta", 0)
+        if g["best_delta"] is None or delta > g["best_delta"]:
+            g["best_delta"] = delta
+            g["best_experiment"] = exp["id"]
+
+    return grouped
+
+
 # ─── CLI ──────────────────────────────────────────────────────────────────
 
 
@@ -453,6 +673,9 @@ def main():
     cov_update_parser.add_argument("--decision", required=True)
     cov_update_parser.add_argument("--delta", type=float, required=True)
 
+    # v3 Features: Tiered History, Checkpoint, Grouping
+    _register_new_subcommands(subparsers)
+
     args = parser.parse_args()
 
     if args.command == "score":
@@ -510,8 +733,85 @@ def main():
             f"({summary['touched_categories']}/{summary['total_categories']})"
         )
 
+    # History komprimieren
+    elif args.command == "compact":
+        result = compact_history(args.history_path, args.keep)
+        info = result.get("_compaction_info", {})
+        print(
+            f"History komprimiert: {info.get('compacted_count', 0)} komprimiert, "
+            f"{info.get('detailed_count', 0)} vollständig"
+        )
+
+    # Agent-optimierte History
+    elif args.command == "agent-history":
+        result = get_history_for_agent(args.history_path, args.keep)
+        print(json.dumps(result, indent=2))
+
+    # Checkpoint speichern
+    elif args.command == "checkpoint-save":
+        coverage = {}
+        if args.coverage_path:
+            cov_path = Path(args.coverage_path)
+            if cov_path.exists():
+                coverage = json.loads(cov_path.read_text())
+        checkpoint = save_checkpoint(
+            args.workspace, args.experiment, args.baseline, coverage, args.next_category
+        )
+        print(f"Checkpoint gespeichert: {checkpoint['last_completed_experiment']}")
+
+    # Checkpoint laden / Resume-Info
+    elif args.command == "checkpoint-info":
+        print(get_resume_info(args.workspace))
+
+    # History nach Kategorien gruppieren
+    elif args.command == "group-history":
+        result = group_history_by_category(args.history_path)
+        print(json.dumps(result, indent=2))
+
     else:
         parser.print_help()
+
+
+def _register_new_subcommands(subparsers):
+    """Registriere die neuen CLI-Subcommands (v3 Features)."""
+
+    # History komprimieren
+    compact_parser = subparsers.add_parser(
+        "compact", help="History komprimieren (Tiered Compression)"
+    )
+    compact_parser.add_argument("history_path", help="Pfad zur history.json")
+    compact_parser.add_argument(
+        "--keep", type=int, default=5, help="Anzahl vollständiger Einträge (Standard: 5)"
+    )
+
+    # Agent-optimierte History
+    agent_hist_parser = subparsers.add_parser(
+        "agent-history", help="Agent-optimierte History-Sicht"
+    )
+    agent_hist_parser.add_argument("history_path", help="Pfad zur history.json")
+    agent_hist_parser.add_argument("--keep", type=int, default=5)
+
+    # Checkpoint speichern
+    cp_save_parser = subparsers.add_parser(
+        "checkpoint-save", help="Resume-Point speichern"
+    )
+    cp_save_parser.add_argument("workspace", help="Workspace-Pfad")
+    cp_save_parser.add_argument("--experiment", required=True)
+    cp_save_parser.add_argument("--baseline", type=float, required=True)
+    cp_save_parser.add_argument("--coverage-path", dest="coverage_path")
+    cp_save_parser.add_argument("--next-category", dest="next_category")
+
+    # Checkpoint Info
+    cp_info_parser = subparsers.add_parser(
+        "checkpoint-info", help="Resume-Info anzeigen"
+    )
+    cp_info_parser.add_argument("workspace", help="Workspace-Pfad")
+
+    # History gruppieren
+    group_parser = subparsers.add_parser(
+        "group-history", help="History nach Kategorien gruppieren"
+    )
+    group_parser.add_argument("history_path", help="Pfad zur history.json")
 
 
 if __name__ == "__main__":

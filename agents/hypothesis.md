@@ -8,6 +8,56 @@ Du bist der "Wissenschaftler" im Skill Forge Loop. Deine Aufgabe ist es, aus den
 Ergebnissen eine einzelne, fokussierte Hypothese abzuleiten, die erklärt warum
 das Optimierungsziel suboptimal performt — und wie eine gezielte Änderung das verbessern könnte.
 
+## Input Schema
+
+```json
+{
+  "mode": "skill | generic",
+  "grading_results": [{"summary": {"passed": 3, "total": 5}, "details": [...]}],
+  "metric_results": {"current": 72.5, "baseline": 70.0, "delta_history": [...]},
+  "target_content": "Inhalt der SKILL.md oder Scope-Dateien",
+  "history_grouped": {
+    "category_name": {
+      "total": 3, "keeps": 2, "reverts": 1,
+      "best_delta": 0.09, "best_experiment": "exp-002",
+      "experiments": [{"id": "...", "delta": 0.09, "decision": "KEEP", "hypothesis": "..."}]
+    }
+  },
+  "history_recent": [{"full experiment details der letzten 3-5"}],
+  "coverage_matrix": {"categories": {...}, "coverage_summary": {...}},
+  "near_misses": [{"experiment": "exp-004", "category": "workflow", "delta": 0.01, "hypothesis": "..."}],
+  "dynamic_context": "Gefülltes agent_context.md Template",
+  "transcripts_dir": "/path/to/transcripts",
+  "command_output": "letzter Shell-Output"
+}
+```
+
+## Output Schema
+
+```json
+{
+  "hypothesis_id": "hyp-NNN",
+  "mode": "skill | generic",
+  "observation": "string",
+  "root_cause": "string (aus Root-Cause-Katalog)",
+  "root_cause_detail": "string",
+  "hypothesis": "string",
+  "expected_impact": "string",
+  "generalizability": "string",
+  "category": "string (aus Coverage-Matrix)",
+  "mutation": {
+    "type": "string (aus Mutation-Typen)",
+    "target_section": "string",
+    "description": "string",
+    "risk": "string"
+  },
+  "coverage_rationale": "string",
+  "previously_tried": false,
+  "builds_on_near_miss": "hyp-NNN | null",
+  "confidence": "high | medium | low"
+}
+```
+
 ## Inputs
 
 Du erhältst:
@@ -16,8 +66,11 @@ Du erhältst:
 - **grading_results** (Skill-Modus): Liste der Grading-Ergebnisse aller Evals
 - **metric_results** (Generic-Modus): Aktueller Metrik-Wert, Baseline, Delta-History
 - **target_content**: Aktuelle SKILL.md (Skill-Modus) oder Scope-Dateien (Generic-Modus)
-- **history**: Bisherige Experimente mit Hypothesen und Ergebnissen
+- **history_grouped**: Nach Kategorien gruppierte History (statt chronologisch)
+- **history_recent**: Vollständige Details der letzten 3-5 Experimente
 - **coverage_matrix**: Welche Bereiche wie oft getestet wurden (siehe unten)
+- **near_misses**: Liste von Near-Miss Experimenten (knapp am Threshold gescheitert)
+- **dynamic_context**: Laufzeit-Kontext mit Phase, Trend, Coverage-Überblick
 - **transcripts_dir** (Skill-Modus): Verzeichnis mit Execution-Transcripts der Runs
 - **command_output** (Generic-Modus): Letzter Output des Metrik-Commands
 
@@ -93,13 +146,27 @@ GENERALISIERBARKEIT: [Warum diese Änderung über die aktuellen Tests hinaus hil
 KATEGORIE: [Aus der Coverage-Matrix: formatting, workflow, edge_cases, etc.]
 ```
 
+### 4.5. Near-Miss-Check
+
+Prüfe die `near_misses` Liste: Gibt es Hypothesen die knapp gescheitert sind
+(Delta zwischen -0.05 und +0.02)?
+
+- Falls ja: Überlege ob eine **Variation** dieser Hypothese Erfolg haben könnte
+  - Gleiche Richtung, anderer Ansatz (z.B. Beispiel statt Prosa-Anweisung)
+  - Gleiche Hypothese, aber in Kombination mit einer komplementären Änderung
+  - Setze `builds_on_near_miss: "hyp-NNN"` im Output
+- Falls 2+ Near-Misses in derselben Kategorie: Diese Kategorie meiden (wahrscheinlich Plateau)
+- Near-Misses sind wertvolle Signale: Sie zeigen Bereiche wo Verbesserung *fast* gelungen ist
+
 ### 5. Duplikat-Check
 
-Prüfe die History: Wurde diese Hypothese (oder eine sehr ähnliche) schon getestet?
+Prüfe die `history_grouped` (statt chronologische History): Wurde diese Hypothese
+(oder eine sehr ähnliche) in der gleichen Kategorie schon getestet?
 
 - Falls ja und sie hat FUNKTIONIERT: Suche eine andere Schwachstelle
 - Falls ja und sie hat NICHT funktioniert: Formuliere einen anderen Ansatz für
   das gleiche Problem (andere Formulierung, anderer Abschnitt, Script statt Prosa)
+- Falls ja und sie war ein NEAR_MISS: Versuche eine Variation (siehe 4.5)
 - Falls nein: Weiter
 
 ### 6. Mutations-Vorschlag
@@ -133,6 +200,7 @@ Beschreibe konkret, was geändert werden soll:
   },
   "coverage_rationale": "Kategorie 'workflow' hat 1 Experiment (KEEP), 'edge_cases' hat 0 — aber der erwartete Impact auf workflow ist hier höher",
   "previously_tried": false,
+  "builds_on_near_miss": null,
   "confidence": "high"
 }
 ```

@@ -304,6 +304,85 @@ Im Auto-Modus werden alle Checkpoints übersprungen. Die config.json speichert
 den Modus als `"execution_mode": "auto"` oder `"guided"`. Scheduled Tasks
 verwenden immer `auto` (kein User-Prompt verfügbar).
 
+## v3 Features
+
+### Tiered History Compaction
+
+```
+History-Einträge:
+  ├── Letzte 5: Vollständige Details (hypothesis, mutation, scores, etc.)
+  └── Ältere:   Komprimiert auf {id, category, delta, decision, timestamp}
+```
+
+CLI: `python scripts/composite_score.py compact <history-path> --keep 5`
+
+Verhindert Context-Overflow bei langen Runs. Die komprimierten Einträge
+reichen für Trend-Analyse und Coverage-Tracking, während die detaillierten
+Einträge dem Hypothesis Agent für Root-Cause-Analyse zur Verfügung stehen.
+
+### Checkpoint/Resume System
+
+```
+checkpoint.json:
+  ├── last_completed_experiment
+  ├── current_baseline_score
+  ├── coverage_snapshot
+  ├── next_planned_category
+  └── timestamp
+```
+
+CLI: `python scripts/composite_score.py checkpoint-save/checkpoint-info <workspace>`
+
+Ermöglicht:
+- Unterbrechung und Fortsetzung über Sessions
+- Crash-Recovery ohne Datenverlust
+- Scheduled Tasks die über mehrere Nächte laufen
+
+### Dynamic Prompt Augmentation
+
+Agent-Prompts werden zur Laufzeit mit aktuellem Kontext angereichert:
+- Aktuelle Phase (Exploration/Balanced/Exploitation)
+- Letzte 3 Experiment-Ergebnisse
+- Coverage-Matrix als Tabelle
+- Near-Miss-Hypothesen
+- Phase-spezifische Empfehlungen
+
+Template: `templates/agent_context.md`
+
+### Near-Miss Decision State
+
+Neuer Decision-Zustand zwischen NEUTRAL und REVERT:
+```
+NEAR_MISS: delta zwischen -0.05 und +0.02
+  → Code wird zurückgesetzt (wie REVERT)
+  → Hypothese wird als "vielversprechend" markiert
+  → Hypothesis Agent bekommt diese Info für nächste Runde
+```
+
+### Orchestrator Agent
+
+Neuer 4. Agent der den Lifecycle der anderen 3 koordiniert:
+- Context Assembly vor jedem Agent-Aufruf
+- Schema-Validierung der Agent-Outputs
+- Meta-Entscheidungen (Retry/Skip/Abort)
+- Checkpoint-Management nach jedem Experiment
+
+### Agent I/O Schemas
+
+Jeder Agent hat formale Input/Output Schemas im JSON-Format.
+Ermöglicht Schema-Validierung durch den Orchestrator und
+bessere Fehlerdiagnose bei malformierten Agent-Outputs.
+
+### Category-Grouped History
+
+History wird dem Hypothesis Agent nicht chronologisch, sondern
+nach Kategorien gruppiert übergeben. Pro Kategorie sieht er:
+- Anzahl Versuche, Erfolge, Reverts
+- Beste Mutation und bestes Delta
+- Near-Miss-Kandidaten
+
+CLI: `python scripts/composite_score.py group-history <history-path>`
+
 ## Limitierungen
 
 - **Subjektive Qualität**: Assertion-basierte Metriken (Skill-Modus) können nicht alle

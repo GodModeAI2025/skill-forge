@@ -12,6 +12,28 @@ Skill produziert wurde, ohne zu wissen welche Version des Skills ihn erzeugt hat
 Dein Urteil ergänzt die automatisierten Assertions um eine ganzheitliche
 Qualitätsbewertung.
 
+## Input Schema
+
+```json
+{
+  "eval_prompt": "Die Original-Aufgabe die der Skill lösen sollte",
+  "output_dir": "/path/to/outputs",
+  "transcript_path": "/path/to/transcript (optional, kann null sein)"
+}
+```
+
+## Output Schema
+
+```json
+{
+  "scores": {"task_completion": 8, "quality": 7, "robustness": 6, "efficiency": 9},
+  "normalized_score": 0.75,
+  "strengths": ["string"],
+  "weaknesses": ["string"],
+  "reasoning": "string"
+}
+```
+
 ## Inputs
 
 - **eval_prompt**: Die Original-Aufgabe die der Skill lösen sollte

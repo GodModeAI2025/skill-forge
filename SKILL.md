@@ -247,7 +247,8 @@ Nach Bestätigung:
 <target>-skill-forge/
 ├── config.json            # Wizard-Konfiguration
 ├── evals.json             # Testfälle (nur Skill-Modus)
-├── history.json            # Fortschritts-Tracking
+├── history.json            # Fortschritts-Tracking (mit Tiered Compaction)
+├── checkpoint.json         # Resume-Point für Session-Übergreifendes Fortsetzen
 ├── experiment-log.tsv      # Flaches Log für schnelles Monitoring
 ├── coverage-matrix.json    # Experiment-Abdeckung
 ├── snapshots/
@@ -266,6 +267,50 @@ Speichere die Baseline:
 ---
 
 ## Der Experiment-Loop
+
+### Schritt 0.5: Resume-Check (vor dem ersten Experiment)
+
+Prüfe ob ein Checkpoint existiert:
+
+1. Lies `checkpoint.json` im Workspace (falls vorhanden)
+2. Falls Checkpoint gefunden:
+   - Zeige dem User: "Resume von Checkpoint: Experiment {N}, Score {X}, Coverage {Y}%"
+   - Setze `current_baseline` und `current_best` aus dem Checkpoint
+   - Setze die Experiment-Nummer fort (nicht bei 1 beginnen)
+3. Falls kein Checkpoint: Normaler Start bei v0/Baseline
+
+Nach JEDEM abgeschlossenen Experiment: Speichere einen Checkpoint via
+`scripts/composite_score.py checkpoint-save`. Das ermöglicht Unterbrechung
+und Fortsetzung über Sessions, Crashes und Scheduled-Task-Grenzen hinweg.
+
+### Schritt 0.7: History-Compaction (vor Agent-Aufrufen)
+
+Bei mehr als 5 abgeschlossenen Experimenten: Komprimiere die History:
+
+1. Rufe `scripts/composite_score.py compact <history-path> --keep 5` auf
+2. Die letzten 5 Experimente behalten vollständige Details
+3. Ältere werden auf `{id, category, delta, decision, timestamp}` reduziert
+4. Das verhindert Context-Overflow bei langen Runs (>10 Experimente)
+
+### Schritt 0.8: Dynamic Context Assembly
+
+Vor jedem Agent-Aufruf wird der Agent-Prompt dynamisch angereichert:
+
+1. Lade `templates/agent_context.md` als Template
+2. Fülle es mit aktuellen Daten:
+   - Aktuelle Runde, Phase (Exploration/Balanced/Exploitation), Trend
+   - Letzte 3 Experiment-Ergebnisse (vollständig)
+   - Coverage-Matrix als Tabelle
+   - Near-Miss-Hypothesen (Mutationen die knapp am Threshold gescheitert sind)
+3. Hänge den gefüllten Context an den jeweiligen Agent-Prompt an
+4. Context-Budget-Regel: Max 30% des Agent-Contexts für History/Context,
+   70% für die aktuelle Aufgabe
+
+Für die kategorisierte History-Sicht nutze:
+`scripts/composite_score.py group-history <history-path>`
+
+Dies liefert pro Kategorie: beste Mutation, Erfolgsrate, Sättigungsstatus —
+deutlich informativer als eine chronologische Liste.
 
 ### Schritt 1: Hypothese bilden
 
@@ -356,6 +401,8 @@ if mutated_score > baseline_score + IMPROVEMENT_THRESHOLD:
     KEEP  → Mutierte Version wird neue Baseline
 elif mutated_score < baseline_score - REGRESSION_THRESHOLD:
     REVERT → Zurück zur vorherigen Baseline
+elif mutated_score < baseline_score + IMPROVEMENT_THRESHOLD and mutated_score >= baseline_score - NEAR_MISS_THRESHOLD:
+    NEAR_MISS → Revert, aber Hypothese als "vielversprechend" markieren
 else:
     NEUTRAL → Keep (bei Gleichstand leichte Präferenz für Neues)
 ```
@@ -363,6 +410,16 @@ else:
 Schwellenwerte:
 - `IMPROVEMENT_THRESHOLD = 0.02` (2% Verbesserung nötig zum Behalten)
 - `REGRESSION_THRESHOLD = 0.05` (5% Verschlechterung → sofort revert)
+- `NEAR_MISS_THRESHOLD = 0.05` (Delta zwischen -0.05 und +0.02 → Near-Miss)
+
+**Near-Miss-Logik**:
+
+Ein NEAR_MISS wird wie REVERT behandelt (Code wird zurückgesetzt), aber die
+Hypothese wird in `decision.json` als `"near_miss": true` markiert. Der
+Hypothesis Agent bekommt in der nächsten Runde diese Information und kann:
+- Die gleiche Hypothese mit einem anderen Ansatz erneut versuchen
+- Die Hypothese mit einer komplementären Mutation kombinieren
+- Die Hypothese verwerfen, wenn bereits 2 Near-Misses in der gleichen Kategorie
 
 **🔀 Guided-Checkpoint 4: Ergebnis bewerten**
 
@@ -609,9 +666,11 @@ Diese sind optional und nicht erforderlich für den normalen Betrieb.
 
 | Datei | Zweck |
 |-------|-------|
-| `agents/hypothesis.md` | Hypothesenbildung aus Eval-Failures + Coverage-Matrix |
+| `agents/orchestrator.md` | Agent-Lifecycle-Koordination, Context Assembly, Checkpoint (v3) |
+| `agents/hypothesis.md` | Hypothesenbildung aus Eval-Failures + Coverage-Matrix + Near-Misses |
 | `agents/mutator.md` | Mutation mit Begründung (Skill + Generic) |
 | `agents/scorer.md` | LLM-as-Judge Bewertung (nur Skill-Modus) |
-| `scripts/composite_score.py` | Composite Score Berechnung + TSV-Logging |
+| `scripts/composite_score.py` | Scoring + TSV-Logging + History-Compaction + Checkpoint + Grouping |
 | `templates/morning_report.md` | Report-Template mit Coverage-Sektion |
+| `templates/agent_context.md` | Dynamic Context Template für Agent-Prompt-Augmentation (v3) |
 | `references/architecture.md` | Detaillierte Architektur-Doku |
