@@ -32,6 +32,10 @@ das Optimierungsziel suboptimal performt — und wie eine gezielte Änderung das
 }
 ```
 
+Zum Typ: `best_delta` und `delta` sind hier Zahlen. In der
+`coverage-matrix.json` steht `best_delta` dagegen als formatierter String
+(`"+0.0900"`) und wird über `as_float` gelesen.
+
 ## Output Schema
 
 ```json
@@ -54,9 +58,31 @@ das Optimierungsziel suboptimal performt — und wie eine gezielte Änderung das
   "coverage_rationale": "string",
   "previously_tried": false,
   "builds_on_near_miss": "hyp-NNN | null",
-  "confidence": "high | medium | low"
+  "confidence": "high | medium | low",
+
+  "failure_summary": [
+    {"pattern": "string", "count": 2, "eval_ids": ["..."],
+     "severity": "high | medium | low",
+     "failure_class": "SKILL_DEFECT | EXECUTION_LAPSE"}
+  ],
+  "success_patterns": ["string"],
+  "appendix_notes": ["string"],
+  "support_count": 2,
+  "single_eval_accepted": false,
+  "source_type": "failure | success",
+
+  "candidates": [{"...": "drei Kandidaten im selben Format"}],
+  "selected_index": 0,
+  "ranking_reasoning": "string"
 }
 ```
+
+Die Top-Level-Felder sind eine Kopie des gewählten Kandidaten, damit der Vertrag
+zu `agents/mutator.md` unverändert bleibt.
+
+Bei Konflikt zwischen einer Failure- und einer Success-Ableitung gewinnt die
+Failure-Version. SkillOpt kodiert dieselbe Asymmetrie in `merge_final.md` als
+"FAILURE PATCHES TAKE PRIORITY".
 
 ## Inputs
 
@@ -92,11 +118,17 @@ Lies die `coverage-matrix.json` und bestimme die Explorationsstrategie:
 - Fokus auf Kategorien mit den besten Deltas
 - Versuche Kombinationseffekte (Verbesserung in A ermöglicht Verbesserung in B)
 
-### 2. Failure-Analyse
+### 2a. Failure-Analyse
+
+**Nur der train-Split.** Die Ergebnisse und Transcripts aus val und test siehst
+du nicht. val entscheidet Keep/Revert, test wird im ganzen Lauf genau zweimal
+angefasst. Wer aus ihnen Hypothesen ableitet, optimiert auf die eigene
+Messlatte, und das Delta sagt danach nur noch, wie gut der Loop seine Testfälle
+auswendig gelernt hat.
 
 **Skill-Modus:**
 
-Lies alle Grading-Ergebnisse und identifiziere:
+Lies alle Grading-Ergebnisse aus train und identifiziere:
 
 - **Häufigste Failure-Patterns**: Welche Assertions failen konsistent?
 - **Sporadische Failures**: Welche failen nur manchmal? (Hinweis auf unklare Anweisungen)
@@ -112,6 +144,50 @@ Analysiere den Metrik-Verlauf und den Command-Output:
 - **Trend**: Verbessert sich die Metrik oder stagniert sie?
 - **Bottleneck**: Welcher Teil des Codes/der Config bremst die Metrik am meisten?
 - **Low-hanging Fruit**: Welche Änderung hätte den größten erwarteten Impact?
+
+### 2b. Erfolgsanalyse
+
+Sieh dir auch die **bestandenen** train-Evals an, nicht nur die gescheiterten.
+Zwei Regeln, beide aus SkillOpts `analyst_success.md`:
+
+1. Benenne nur Muster, die noch **nicht** im Skill stehen.
+2. Verstärke bestehende Abschnitte, statt neue Top-Level-Abschnitte anzulegen.
+
+Ausgabefeld: `success_patterns: [str]`.
+
+Der eigentliche Zweck ist nicht die Erfolgsmeldung, sondern die **Schutzliste**
+für den Mutator. Skill Forge kennt die Mutationstypen `prune` und
+`structure_change`. Ohne benannte funktionierende Muster löscht oder verschiebt
+der Mutator genau die Abschnitte, die die bestandenen Evals tragen. Ein reiner
+Fehleranalysator ist ein monotoner Regelanhäufer ohne Vergessensmechanismus.
+
+Nur train. Die bestandenen val- und test-Evals siehst du nicht, sonst leckt der
+Holdout über diesen Block ins Skill.
+
+### 2c. Defect-vs-Lapse-Klassifikation
+
+Klassifiziere JEDES Failure-Pattern, bevor du nach der Ursache suchst. Die
+Diskriminierungsfrage lautet:
+
+> Gibt es im aktuellen Skill eine Regel, die diesen Fehler verhindert hätte,
+> wenn der Agent sie befolgt hätte?
+
+- **Nein** → `SKILL_DEFECT`. Die Regel fehlt oder ist zu vage. Normaler Weg:
+  Hypothese, Mutation, Gate.
+- **Ja** → `EXECUTION_LAPSE`. Die Regel stand da und wurde ignoriert. Das
+  erzeugt **keine** Body-Mutation, sondern eine Zeile in `appendix_notes`.
+
+**Bei echter Unsicherheit: EXECUTION_LAPSE.** Der Default ist bewusst
+asymmetrisch. Eine gültige Regel wird nicht wegen eines einmaligen
+Ausrutschers umgeschrieben oder gelöscht. In Kombination mit der
+Auflösungsgrenze wäre der Schaden unsichtbar: der Score-Unterschied eines
+einzelnen Ausrutschers liegt unterhalb dessen, was das Gate messen kann, die
+korrekte Regel wäre trotzdem weg.
+
+`appendix_notes` landen über `appendix-append` in der geschützten Region
+`<!-- FORGE_APPENDIX_START -->`. Sie umgehen das Gate, deshalb sind sie auf 15
+gedeckelt, und deshalb sind sie kurz: eine Zeile, die den konkreten Ausrutscher
+benennt, keine neue Regel.
 
 ### 3. Root-Cause-Analyse
 
@@ -135,7 +211,19 @@ Für die Top-3 Probleme, suche nach der Ursache:
 
 ### 4. Hypothese formulieren
 
-Formuliere EINE Hypothese im Format:
+Formuliere **DREI** Kandidaten im folgenden Format. Ein Einzelschuss-Prompt
+greift die erstbeste plausible Ursache; drei Kandidaten kosten keinen weiteren
+Agent-Aufruf und geben dem Ranking in Abschnitt 7 etwas zu vergleichen.
+
+Diversitäts-Nebenbedingung, phasenabhängig:
+
+- Früh- und Mittelphase: die drei Kandidaten stammen aus mindestens **zwei**
+  Kategorien der Coverage-Matrix.
+- Spätphase: mindestens drei verschiedene Root Causes aus dem Katalog in
+  Abschnitt 3, oder drei verschiedene Mutation-Typen. Sonst kollidiert die
+  Regel mit der Exploitation-Strategie aus Abschnitt 1.
+
+Format je Kandidat:
 
 ```
 BEOBACHTUNG: [Was in den Ergebnissen passiert]
@@ -148,8 +236,15 @@ KATEGORIE: [Aus der Coverage-Matrix: formatting, workflow, edge_cases, etc.]
 
 ### 4.5. Near-Miss-Check
 
-Prüfe die `near_misses` Liste: Gibt es Hypothesen die knapp gescheitert sind
-(Delta zwischen -0.05 und +0.02)?
+Prüfe die `near_misses` Liste: Gibt es Hypothesen, die knapp an der
+Keep-Schwelle gescheitert sind?
+
+Ein Near-Miss ist seit v3 ein Flag auf einer NEUTRAL-Entscheidung, kein eigener
+Ausgang. Gesetzt wird es, wenn `delta > threshold - near_miss_band` gilt, mit den
+Defaults also für Deltas zwischen 0.00 und 0.02. Die alte Angabe "-0.05 bis
++0.02" beschrieb den vierten Ausgang der kaputten Kaskade und lud dazu ein,
+gemessene Regressionen als Beinahe-Treffer zu variieren. Eine Änderung, die den
+Score um 0.03 gesenkt hat, ist kein Near-Miss.
 
 - Falls ja: Überlege ob eine **Variation** dieser Hypothese Erfolg haben könnte
   - Gleiche Richtung, anderer Ansatz (z.B. Beispiel statt Prosa-Anweisung)
@@ -169,7 +264,43 @@ Prüfe die `history_grouped` (statt chronologische History): Wurde diese Hypothe
 - Falls ja und sie war ein NEAR_MISS: Versuche eine Variation (siehe 4.5)
 - Falls nein: Weiter
 
+### 5.5. Kandidaten ranken
+
+Erst hier, nach Near-Miss-Check und Duplikat-Check. Wer vorher rankt, bewertet
+Kandidaten, die er gleich danach verwirft, und steht am Ende ohne Auswahl da.
+Fällt ein Kandidat durch die Checks, ersetze ihn, statt nachzuranken.
+
+Bleibt nur ein Kandidat übrig, entfällt das Ranking.
+
+Vier Kriterien, in genau dieser Reihenfolge:
+
+1. **Systematic impact.** Eine Regel, die in 3/3 Runs failende Assertions
+   adressiert, schlägt eine für einen Einzelfall.
+2. **Complementarity.** Füllt der Kandidat eine Lücke in der aktuellen SKILL.md
+   und in der Coverage-Matrix, oder dupliziert er bestehende Anweisungen?
+3. **Generality.** Trägt die Änderung über die konkreten Testfälle hinaus?
+4. **Actionability.** Ist konkret genug beschrieben, was wo geändert wird?
+
+Gib nur den Index zurück. **Formuliere die Kandidaten beim Ranken nicht um.**
+Ausgabe: `selected_index` (0-basiert, Länge 3) und `ranking_reasoning`.
+
+Nicht gewählte Kandidaten werden nicht aufgehoben. Sie wurden gegen eine
+SKILL.md formuliert, die nach einem KEEP nicht mehr existiert, und gegen
+Eval-Ergebnisse, die dann veraltet sind. Der Pool wird jede Runde neu erzeugt.
+
 ### 6. Mutations-Vorschlag
+
+**Vorbedingung: `support_count >= 2`.** Ein Failure-Pattern, das nur in einem
+einzigen train-Eval auftritt, ist als Grundlage zu dünn. Pflicht ist dabei
+`eval_ids`, nicht der Zähler: eine ID-Liste ist beim Lesen der hypothesis.json
+nachprüfbar, eine nackte Zahl nicht.
+
+Bei kleinen Train-Sets relativ rechnen: `support_count >= max(2, ceil(0.4 *
+anzahl_train_evals))`. Bei weniger als vier train-Evals wird die Regel zur
+Sollvorschrift, sonst blockiert sie jede Hypothese.
+
+Ausnahme nur mit `single_eval_accepted: true` und einer Begründung im Feld
+`generalizability`, warum die Änderung über diesen einen Fall hinaus trägt.
 
 Beschreibe konkret, was geändert werden soll:
 

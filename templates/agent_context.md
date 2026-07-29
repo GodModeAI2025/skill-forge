@@ -31,3 +31,18 @@
 ## Empfehlung für diese Runde
 
 {phase_guidance}
+
+## Bereits verworfen
+
+{rejected_block}
+
+Gerendert mit `rejected-format <workspace>/rejected.jsonl --limit 10`. Enthält
+alle Nicht-KEEP-Entscheidungen im Wortlaut, Near-Misses als markierte
+Teilmenge.
+
+## Bestätigte Muster
+
+{success_patterns}
+
+Aus der Erfolgsanalyse der letzten drei Experimente. Der Mutator prüft `prune`
+und `structure_change` dagegen.

@@ -278,7 +278,7 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
       </section>
 
       <section class="screen animate-in">
-        <h2 class="screen-heading">What Skill Forge Has Already Achieved</h2>
+        <h2 class="screen-heading">Earlier Runs</h2>
         <div class="card-grid stagger-children">
           <div class="card animate-in">
             <div class="card-icon">✍️</div>
@@ -296,6 +296,7 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
             <div class="card-text">From 93% to 100% in a single experiment. LinkedIn character limit was automatically enforced.</div>
           </div>
         </div>
+        <p style="margin-top:1.5rem;font-size:0.95rem;opacity:0.8">These runs predate v3 and used the old gate, where efficiency carried 20 percent of the score. The repository holds no evals.json, history.json or snapshot for any of them, so none of it is reproducible. The 74 to 90 percent figure is a composite under the old weighting; 87 and 93 percent are raw assertion pass rates. From v3 onwards, results ship with their history.json and evals.json or they are not published.</p>
       </section>
 
       <section class="screen animate-in">
@@ -360,8 +361,8 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
       </section>
 
       <section class="screen animate-in">
-        <h2 class="screen-heading">Three Helpers Behind the Scenes</h2>
-        <p>Skill Forge uses three specialized <span class="term" data-tooltip="An Agent is an AI module with a clearly defined task. Each agent reads inputs, processes them, and returns a structured result.">Agents</span> that work together:</p>
+        <h2 class="screen-heading">Five Helpers Behind the Scenes</h2>
+        <p>Skill Forge uses five specialized <span class="term" data-tooltip="An Agent is an AI module with a clearly defined task. Each agent reads inputs, processes them, and returns a structured result.">Agents</span> that work together:</p>
         <div class="card-grid stagger-children">
           <div class="card animate-in">
             <div class="card-icon">🔬</div>
@@ -377,6 +378,16 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
             <div class="card-icon">⚖️</div>
             <div class="card-title">The Judge</div>
             <div class="card-text">Evaluates the result objectively. Was the change an improvement? Or did it make things worse?</div>
+          </div>
+          <div class="card animate-in">
+            <div class="card-icon">🎼</div>
+            <div class="card-title">The Conductor</div>
+            <div class="card-text">Keeps the others in time: assembles the context for every call, picks the phase between exploring and deepening, and keeps history, coverage matrix and checkpoint up to date.</div>
+          </div>
+          <div class="card animate-in">
+            <div class="card-icon">📜</div>
+            <div class="card-title">The Archivist</div>
+            <div class="card-text">Every five experiments it distils what kind of change actually works for this particular skill. Its notes are for the optimizer, not for the skill itself, and every point needs an experiment as evidence.</div>
           </div>
         </div>
       </section>
@@ -425,8 +436,8 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
           <div class="loop-node" style="top:55%;right:5%" data-desc="<strong>Test &amp; Measure:</strong> The modified version is tested against all test cases. The score shows objectively: better, same, or worse?" onclick="activateNode(this)">
             <span class="node-emoji">📊</span> Measure
           </div>
-          <div class="loop-node" style="top:55%;left:5%" data-desc="<strong>Decision:</strong> Score improved by more than 2% → keep. Worsened by more than 5% → revert. In between → slight preference for the new version." onclick="activateNode(this)">
-            <span class="node-emoji">⚖️</span> Keep/Revert
+          <div class="loop-node" style="top:55%;left:5%" data-desc="<strong>Decision:</strong> Three outcomes. Score improved by more than 2% → KEEP, the change stays. Worsened by more than 5% → REVERT. Everything in between, ties included → NEUTRAL, and NEUTRAL is rolled back too. Keeping the new version on a zero round means drifting away from the starting point over ten experiments without a single measurement to justify it. Just below the keep threshold, Forge also sets a near_miss flag: the hypothesis was close, so the next round varies it." onclick="activateNode(this)">
+            <span class="node-emoji">⚖️</span> Keep/Neutral/<br>Revert
           </div>
         </div>
         <div class="loop-desc" id="loop-desc"><strong>Setup Wizard:</strong> Before anything starts, an assistant walks you through 6 simple steps: choose mode, set target, create test cases, and run a trial.</div>
@@ -565,7 +576,7 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
           </div>
           <div class="setting-row animate-in">
             <div class="setting-name">Threshold</div>
-            <div class="setting-desc">A change needs at least 2% improvement to be kept.</div>
+            <div class="setting-desc">A change needs at least 2% improvement to be kept. Below that, it gets rolled back.</div>
           </div>
           <div class="setting-row animate-in">
             <div class="setting-name">Crash Limit</div>
@@ -615,7 +626,7 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
       <section class="screen animate-in">
         <div class="callout-success callout">
           <div class="callout-label">🛡️ Safety Net</div>
-          <div class="callout-text">Skill Forge creates a backup (<span class="term" data-tooltip="A Snapshot is a complete copy of your skill at a specific point in time. You can always roll back to any snapshot.">Snapshot</span>) before every change. Even after 10 experiments, you can always return to the original.</div>
+          <div class="callout-text">Skill Forge creates a backup (<span class="term" data-tooltip="A Snapshot is a complete copy of your skill at a specific point in time. You can always roll back to any snapshot.">Snapshot</span>) before every change. The backups are named <code style="background:var(--color-bg-code);color:#D0D0E8;padding:2px 6px;border-radius:4px;font-family:var(--font-mono);font-size:var(--text-xs)">pre-exp-001</code>, <code style="background:var(--color-bg-code);color:#D0D0E8;padding:2px 6px;border-radius:4px;font-family:var(--font-mono);font-size:var(--text-xs)">pre-exp-002</code> and so on, each one the state right before that experiment. Even after 10 experiments, you can always return to the original.</div>
         </div>
       </section>
     </div>
@@ -640,7 +651,7 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
               <span style="color:var(--color-impulse-orange);font-size:1.2rem">▸</span>
               Can Skill Forge make my skill worse?
             </summary>
-            <div style="padding:0 var(--space-5) var(--space-4);font-size:var(--text-sm);color:var(--color-text-secondary)">No. Every change that lowers the score is automatically reverted. Plus, snapshots let you return to the original state at any time.</div>
+            <div style="padding:0 var(--space-5) var(--space-4);font-size:var(--text-sm);color:var(--color-text-secondary)">No. Only changes that measurably improve the score are kept. Regressions get rolled back, and so do rounds with no measurable effect. Plus, snapshots let you return to the original state at any time.</div>
           </details>
           <details class="faq-item" style="background:var(--color-surface);border-radius:var(--radius-md);box-shadow:var(--shadow-sm);overflow:hidden">
             <summary style="padding:var(--space-4) var(--space-5);font-family:var(--font-display);font-weight:600;cursor:pointer;list-style:none;display:flex;align-items:center;gap:var(--space-3)">

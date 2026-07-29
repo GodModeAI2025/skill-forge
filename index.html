@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Skill Forge v2 — Autonomous AI Skill &amp; Code Improvement</title>
+<title>Skill Forge v3 — Autonomous AI Skill &amp; Code Improvement</title>
 <meta name="description" content="An autonomous experiment loop that makes AI skills and codebases better while you sleep. Two modes: Skill optimization and Generic metric optimization. Auto or Guided execution.">
 <style>
   :root {
@@ -297,6 +297,8 @@
   .agent-card:nth-child(1) .agent-icon { background: rgba(245, 158, 11, 0.12); }
   .agent-card:nth-child(2) .agent-icon { background: rgba(59, 130, 246, 0.12); }
   .agent-card:nth-child(3) .agent-icon { background: rgba(16, 185, 129, 0.12); }
+  .agent-card:nth-child(4) .agent-icon { background: rgba(168, 85, 247, 0.12); }
+  .agent-card:nth-child(5) .agent-icon { background: rgba(236, 72, 153, 0.12); }
 
   .agent-card h3 { font-size: 1.1rem; margin-bottom: 4px; }
   .agent-card .role { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
@@ -511,9 +513,9 @@
 <!-- Hero -->
 <header class="hero">
   <div class="container">
-    <div class="hero-badge">v2 <span>&middot;</span> Open Source <span>&middot;</span> MIT License <span>&middot;</span> Claude Cowork <span>&middot;</span> OpenClaw</div>
+    <div class="hero-badge">v3 <span>&middot;</span> Open Source <span>&middot;</span> MIT License <span>&middot;</span> Claude Cowork <span>&middot;</span> OpenClaw</div>
     <h1>Skill <span class="forge">Forge</span></h1>
-    <p>An autonomous experiment loop that makes AI skills and codebases better while you sleep. Works with Claude Cowork and OpenClaw. Run it fully autonomous or step through each decision in guided mode.</p>
+    <p>An autonomous experiment loop for AI skills and codebases. It changes one thing, measures it against a held-out split, and keeps the change only if the difference is larger than what the eval set can actually resolve. Everything else gets rolled back. Works with Claude Cowork and OpenClaw, fully autonomous or step by step.</p>
     <div class="cta-row">
       <a href="https://github.com/GodModeAI2025/skill-forge" class="btn btn-primary">
         <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
@@ -533,11 +535,13 @@
         <span class="loop-arrow">&rarr;</span>
         <span class="loop-step">Mutate</span>
         <span class="loop-arrow">&rarr;</span>
+        <span class="loop-step">Diff</span>
+        <span class="loop-arrow">&rarr;</span>
         <span class="loop-step">Evaluate</span>
         <span class="loop-arrow">&rarr;</span>
         <span class="loop-step">Score</span>
         <span class="loop-arrow">&rarr;</span>
-        <span class="loop-step">Keep / Revert</span>
+        <span class="loop-step">Keep / Neutral / Revert</span>
         <span class="loop-arrow">&circlearrowleft;</span>
       </div>
       <div class="loop-label">Setup Wizard with Validation Gates &rarr; Experiment Loop &rarr; Morning Report</div>
@@ -555,7 +559,7 @@
       <div class="mode-card">
         <span class="tag tag-skill">Skill Mode</span>
         <h3>Optimize AI Skills</h3>
-        <p>Improve a Skill's SKILL.md by running evals, grading outputs, and scoring with a composite metric. Works with Claude Cowork and OpenClaw skills.</p>
+        <p>Improve a Skill's SKILL.md by running evals, grading outputs, and scoring with a gate score. Works with Claude Cowork and OpenClaw skills.</p>
         <ul>
           <li>Assertion-based scoring</li>
           <li>Optional LLM-as-Judge</li>
@@ -645,8 +649,8 @@
 <!-- Agents -->
 <section>
   <div class="container">
-    <h2>Three <span class="highlight">Agents</span>, One Loop</h2>
-    <p class="section-sub">Each experiment cycle is driven by three specialized agents working in sequence.</p>
+    <h2>Five <span class="highlight">Agents</span>, One Loop</h2>
+    <p class="section-sub">Each experiment cycle is driven by five specialized agents. Four run every round; the archivist every fifth.</p>
 
     <div class="agent-grid">
       <div class="agent-card">
@@ -665,7 +669,19 @@
         <div class="agent-icon">&#x2696;</div>
         <h3>Scorer Agent</h3>
         <div class="role">The Judge</div>
-        <p>LLM-as-Judge evaluating output quality across four dimensions. In Generic Mode, the shell command provides the score directly.</p>
+        <p>LLM-as-Judge evaluating output quality across three dimensions. In Generic Mode, the shell command provides the score directly.</p>
+      </div>
+      <div class="agent-card">
+        <div class="agent-icon">&#x1f3bc;</div>
+        <h3>Orchestrator Agent</h3>
+        <div class="role">The Conductor</div>
+        <p>Assembles context for every agent call, picks the exploration/exploitation phase, collects near-miss hypotheses, and keeps history, coverage matrix and checkpoint in sync.</p>
+      </div>
+      <div class="agent-card">
+        <div class="agent-icon">&#x1f4dc;</div>
+        <h3>Meta Agent</h3>
+        <div class="role">The Archivist</div>
+        <p>Every five experiments, distils what kind of edit actually works for this particular skill. Writes to the optimizer's own notes, never into the target skill. Each bullet needs an experiment id, each previous bullet gets a verdict.</p>
       </div>
     </div>
   </div>
@@ -675,30 +691,48 @@
 <section>
   <div class="container">
     <h2>Objective <span class="highlight">Scoring</span></h2>
-    <p class="section-sub">Every mutation is measured against a composite metric. No vibes, no gut feeling &mdash; just numbers.</p>
+    <p class="section-sub">Every mutation is measured against a gate score. No vibes, no gut feeling &mdash; just numbers.</p>
 
     <div class="formula-box">
-      <div class="formula-label">Skill Mode &mdash; Composite Score</div>
-      <div class="formula">assertion_pass_rate &times; 0.80 &nbsp;+&nbsp; efficiency_score &times; 0.20</div>
+      <div class="formula-label">Skill Mode &mdash; Gate Score</div>
+      <div class="formula">assertion_pass_rate &times; 1.00</div>
     </div>
 
     <div class="formula-box">
       <div class="formula-label">Skill Mode &mdash; With LLM-as-Judge</div>
-      <div class="formula">assertions &times; 0.50 &nbsp;+&nbsp; llm_judge &times; 0.30 &nbsp;+&nbsp; efficiency &times; 0.20</div>
+      <div class="formula">assertions &times; 0.65 &nbsp;+&nbsp; llm_judge &times; 0.35</div>
     </div>
 
     <div class="formula-box">
       <div class="formula-label">Generic Mode &mdash; Direct Metric</div>
-      <div class="formula">shell_command &rarr; extract_number &rarr; compare_to_baseline &rarr; keep/revert</div>
+      <div class="formula">shell_command &rarr; extract_number &rarr; compare_to_baseline &rarr; keep/neutral/revert</div>
     </div>
+
+    <div class="formula-box">
+      <div class="formula-label">Decision &mdash; Three Outcomes</div>
+      <div class="formula">
+        delta &ge; max(improvement_threshold, noise_floor, resolution) &rarr; KEEP<br>
+        delta &le; &minus;regression_threshold &rarr; REVERT<br>
+        everything in between, ties included &rarr; NEUTRAL
+      </div>
+    </div>
+
+    <div class="formula-box">
+      <div class="formula-label">Resolution &mdash; the smallest difference that can mean anything</div>
+      <div class="formula">resolution = 2 &divide; N_assertions</div>
+    </div>
+
+    <p class="section-sub" style="margin-top:24px">The gate score is the assertion pass rate, so it moves in steps of 1/N. With nine assertions a single flip moves 0.111; a fixed threshold of 0.02 sits below that and turns every flip into a KEEP. The keep threshold is therefore at least two flips wide, and the loop tells you the number before it starts: <em>&ldquo;resolution 0.065, changes below this are not measurable with this eval set.&rdquo;</em></p>
+
+    <p class="section-sub" style="margin-top:24px">NEUTRAL rolls the mutation back. A loop that keeps the new version on a zero round drifts away from its starting point without a single measurement to justify it. Deltas just below the keep threshold carry a near_miss flag, so the next round can vary the same hypothesis instead of dropping it. Efficiency (tokens, wall clock) is still measured and reported in the morning report, but it no longer gates anything.</p>
   </div>
 </section>
 
 <!-- Results -->
 <section>
   <div class="container">
-    <h2>Real-World <span class="highlight">Results</span></h2>
-    <p class="section-sub">Tested on production skills with measurable before/after improvements.</p>
+    <h2>Earlier <span class="highlight">Runs</span></h2>
+    <p class="section-sub">Three runs under the v2 decision rules. Read the caveat below the numbers.</p>
 
     <div class="results-grid">
       <div class="result-card">
@@ -747,70 +781,93 @@
         <div class="result-insight">Explicit constraints (char limits, required fields) fix format drift.</div>
       </div>
     </div>
+
+    <p class="section-sub" style="max-width:72ch;margin:2.5rem auto 0;font-size:0.95rem;opacity:0.85;text-align:left">
+      These runs predate v3. They used the old gate, where efficiency carried 20 percent of the
+      score, and the old decision cascade. The repository contains no <code>evals.json</code>,
+      <code>history.json</code> or snapshot for any of them, so none of it is reproducible from
+      here. The 0.74 to 0.90 figure is a composite score under the old weighting; the 87 and 93
+      percent figures are raw assertion pass rates. Results from v3 onwards ship with their
+      <code>history.json</code> and <code>evals.json</code>, or they do not get published.
+    </p>
   </div>
 </section>
 
-<!-- v2 Features -->
+<!-- v3 Features -->
 <section>
   <div class="container">
     <h2>Built to be <span class="highlight">Robust</span></h2>
-    <p class="section-sub">Production-grade safeguards so you can run it unattended overnight.</p>
+    <p class="section-sub">Safeguards for a loop that edits your files unattended, all night, with nobody watching.</p>
 
     <div class="feature-list">
       <div class="feature">
         <div class="feature-dot"></div>
         <div>
-          <h4>Setup Wizard</h4>
-          <p>6-step wizard with validation gates. Each step must pass before proceeding.</p>
+          <h4>It cannot cheat the metric</h4>
+          <p>The optimal mutation for <code>flake8 src/ | wc -l</code> is to delete <code>src/</code>. Before every generic-mode experiment the loop pins the metric config, the test files, the file count and the byte size of what it measures. Without a passing check it gets <code>INVALID</code> instead of a number.</p>
         </div>
       </div>
       <div class="feature">
         <div class="feature-dot"></div>
         <div>
-          <h4>Dry-Run Gate</h4>
-          <p>Mandatory pre-flight check. The loop only starts if evals and metrics actually work.</p>
+          <h4>Regions it must not touch</h4>
+          <p>Put anything between <code>FORGE_KEEP</code> markers and the loop will never change it. A second region holds notes that bypass the gate. Both are checked byte-wise in Python, not by asking the agent whether it behaved.</p>
         </div>
       </div>
       <div class="feature">
         <div class="feature-dot"></div>
         <div>
-          <h4>Train/Test Split</h4>
-          <p>60/40 split prevents overfitting to specific eval cases.</p>
+          <h4>Revert actually reverts</h4>
+          <p>Every experiment snapshots the state before it, with a manifest. A rollback restores the recorded files and removes the ones the mutation added, from any working directory.</p>
         </div>
       </div>
       <div class="feature">
         <div class="feature-dot"></div>
         <div>
-          <h4>Coverage Matrix</h4>
-          <p>Tracks which improvement categories have been tried, with saturation detection.</p>
+          <h4>Differences below the noise are not kept</h4>
+          <p>The gate score is the assertion pass rate, so it moves in steps of 1/N. The keep threshold is at least two flips wide. A fixed 0.02 would sit below the resolution of any real eval set and turn every single flip into a KEEP.</p>
         </div>
       </div>
       <div class="feature">
         <div class="feature-dot"></div>
         <div>
-          <h4>TSV Experiment Log</h4>
-          <p>One-line-per-experiment flat log. Quick monitoring with tail, grep, awk.</p>
+          <h4>The holdout stays a holdout</h4>
+          <p>train feeds hypotheses, val decides keep or revert, test is touched exactly twice: once for the baseline, once for the report. Assigned by a stable hash, so deleting an eval does not reshuffle the rest.</p>
         </div>
       </div>
       <div class="feature">
         <div class="feature-dot"></div>
         <div>
-          <h4>Crash Recovery</h4>
-          <p>Classifies errors, retries once, then skips. 3 consecutive crashes pause the loop.</p>
+          <h4>Regressions are not netted away</h4>
+          <p>Five new hits against three new failures is a plus two in the aggregate and looks like progress. The report pairs the same evals across both versions and lists regressions first.</p>
         </div>
       </div>
       <div class="feature">
         <div class="feature-dot"></div>
         <div>
-          <h4>Exploration-Exploitation</h4>
-          <p>Early rounds explore broadly, late rounds focus on categories with the best results.</p>
+          <h4>An ignored rule is not a missing rule</h4>
+          <p>Before looking for a cause, every failure is classified: was there already a rule that would have prevented this? If yes, that produces a note, not a rewrite. Otherwise one subagent slip costs a correct rule.</p>
         </div>
       </div>
       <div class="feature">
         <div class="feature-dot"></div>
         <div>
-          <h4>Eval Rotation</h4>
-          <p>Fresh eval queries after 5 experiments to maintain diversity.</p>
+          <h4>Nothing grows for free</h4>
+          <p>A token budget spans the skill plus everything the loop wrote beside it. Over budget, the next round is forced into pruning.</p>
+        </div>
+      </div>
+      <div class="feature">
+        <div class="feature-dot"></div>
+        <div>
+          <h4>Crash recovery and resume</h4>
+          <p>Three consecutive crashes pause the loop. If the process dies between mutation and decision, the checkpoint knows and rolls back before continuing.</p>
+        </div>
+      </div>
+      <div class="feature">
+        <div class="feature-dot"></div>
+        <div>
+          <h4>271 tests, two adversarial reviews</h4>
+          <p>Five independent reviewers went through the code, and a mutation test over 69 targeted changes hunted for tests that would not notice a real bug. Every finding is pinned in the suite.</p>
         </div>
       </div>
     </div>
@@ -831,7 +888,10 @@
         <span class="comment"># Clone the repo</span><br>
         <span class="cmd">git clone</span> <span class="string">https://github.com/GodModeAI2025/skill-forge.git</span><br><br>
         <span class="comment"># Copy into your skills folder (Cowork or OpenClaw)</span><br>
+        <span class="cmd">mkdir -p</span> ~/.skills/skills<br>
         <span class="cmd">cp -r</span> skill-forge/ ~/.skills/skills/skill-forge/<br><br>
+        <span class="comment"># Check that the machinery works (271 tests, no API calls)</span><br>
+        <span class="cmd">python3 -m pytest</span> tests/ -q<br><br>
         <span class="comment"># Auto mode: let it run overnight</span><br>
         <span class="string">"Use skill-forge to improve my linkedin-content skill"</span><br><br>
         <span class="comment"># Guided mode: decide at every step</span><br>

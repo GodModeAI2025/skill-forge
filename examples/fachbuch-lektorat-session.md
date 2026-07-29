@@ -1,5 +1,12 @@
 # Example Session: fachbuch-lektorat
 
+> **Historisches Protokoll, Stand vor v3.** Der Lauf entstand unter anderen
+> Entscheidungsregeln. Das hier verwendete "NEUTRAL-KEEP" gehört keiner
+> Spezifikation an, weder der damaligen noch der heutigen; unter der aktuellen
+> Kaskade wären beide Experimente NEUTRAL und damit zurückgerollt worden.
+> Ausserdem deklariert die Session einen 3/2-Train-Test-Split, scored dann aber
+> alle fünf Evals gemeinsam. Der Text bleibt unverändert stehen.
+
 Real experiment log from optimizing a German technical book editing skill.
 
 ## Target Skill
