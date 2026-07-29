@@ -313,7 +313,7 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
       </section>
 
       <section class="screen animate-in">
-        <h2 class="screen-heading">Was Skill Forge bereits geschafft hat</h2>
+        <h2 class="screen-heading">Frühere Läufe</h2>
         <div class="card-grid stagger-children">
           <div class="card animate-in">
             <div class="card-icon">✍️</div>
@@ -331,6 +331,7 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
             <div class="card-text">Von 93% auf 100% in nur einem einzigen Experiment. LinkedIn-Zeichenlimit wurde automatisch eingehalten.</div>
           </div>
         </div>
+        <p style="margin-top:1.5rem;font-size:0.95rem;opacity:0.8">Diese Läufe stammen aus der Zeit vor v3, mit dem alten Gate, in dem Effizienz 20 Prozent des Scores trug. Im Repo liegt zu keinem davon eine evals.json, history.json oder ein Snapshot, nachrechnen kann man sie also nicht. 74 auf 90 Prozent ist ein Composite unter der alten Gewichtung, 87 und 93 Prozent sind reine Assertion-Pass-Raten. Ab v3 werden Ergebnisse nur noch mit history.json und evals.json veröffentlicht.</p>
       </section>
 
       <!-- QUIZ 1 -->
@@ -396,8 +397,8 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
       </section>
 
       <section class="screen animate-in">
-        <h2 class="screen-heading">Drei Helfer im Hintergrund</h2>
-        <p>Skill Forge nutzt drei spezialisierte <span class="term" data-tooltip="Ein Agent ist ein KI-Modul mit einer klar definierten Aufgabe. Jeder Agent liest Eingaben, verarbeitet sie und gibt ein strukturiertes Ergebnis zurück.">Agenten</span>, die zusammenarbeiten:</p>
+        <h2 class="screen-heading">Fünf Helfer im Hintergrund</h2>
+        <p>Skill Forge nutzt fünf spezialisierte <span class="term" data-tooltip="Ein Agent ist ein KI-Modul mit einer klar definierten Aufgabe. Jeder Agent liest Eingaben, verarbeitet sie und gibt ein strukturiertes Ergebnis zurück.">Agenten</span>, die zusammenarbeiten:</p>
         <div class="card-grid stagger-children">
           <div class="card animate-in">
             <div class="card-icon">🔬</div>
@@ -413,6 +414,16 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
             <div class="card-icon">⚖️</div>
             <div class="card-title">Der Richter</div>
             <div class="card-text">Bewertet das Ergebnis neutral. War die Änderung eine Verbesserung? Oder hat sie etwas verschlechtert?</div>
+          </div>
+          <div class="card animate-in">
+            <div class="card-icon">🎼</div>
+            <div class="card-title">Der Dirigent</div>
+            <div class="card-text">Hält die anderen im Takt: sammelt den Kontext für jeden Aufruf, wählt die Phase zwischen Erkunden und Vertiefen und schreibt History, Coverage-Matrix und Checkpoint fort.</div>
+          </div>
+          <div class="card animate-in">
+            <div class="card-icon">📜</div>
+            <div class="card-title">Der Archivar</div>
+            <div class="card-text">Alle fünf Experimente destilliert er, welche Art von Änderung bei genau diesem Skill funktioniert. Seine Notizen sind für den Optimierer, nicht für den Skill selbst, und jeder Punkt braucht ein Experiment als Beleg.</div>
           </div>
         </div>
       </section>
@@ -462,8 +473,8 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
           <div class="loop-node" style="top:55%;right:5%" data-desc="<strong>Testen & Messen:</strong> Die veränderte Version wird gegen alle Testfälle geprüft. Der Score zeigt objektiv: besser, gleich oder schlechter?" onclick="activateNode(this)">
             <span class="node-emoji">📊</span> Messen
           </div>
-          <div class="loop-node" style="top:55%;left:5%" data-desc="<strong>Entscheidung:</strong> Score um mehr als 2% besser → behalten. Mehr als 5% schlechter → rückgängig machen. Dazwischen → leichte Präferenz für die neue Version." onclick="activateNode(this)">
-            <span class="node-emoji">⚖️</span> Keep/Revert
+          <div class="loop-node" style="top:55%;left:5%" data-desc="<strong>Entscheidung:</strong> Drei Ausgänge. Score um mehr als 2% besser → KEEP, die Änderung bleibt. Mehr als 5% schlechter → REVERT. Alles dazwischen, Gleichstand eingeschlossen → NEUTRAL, und auch NEUTRAL wird zurückgerollt. Wer bei Null-Runden das Neue behält, driftet über zehn Experimente vom Ausgangspunkt weg, ohne dass eine einzige Messung das rechtfertigt. Knapp unterhalb der Keep-Schwelle setzt Forge zusätzlich ein near_miss-Flag: die Hypothese war nah dran und wird in der nächsten Runde variiert." onclick="activateNode(this)">
+            <span class="node-emoji">⚖️</span> Keep/Neutral/<br>Revert
           </div>
         </div>
         <div class="loop-desc" id="loop-desc"><strong>Setup-Wizard:</strong> Bevor es losgeht, führt dich ein Assistent durch 6 einfache Schritte: Modus wählen, Ziel festlegen, Testfälle erstellen und einen Probelauf starten.</div>
@@ -603,7 +614,7 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
           </div>
           <div class="setting-row animate-in">
             <div class="setting-name">Schwellenwert</div>
-            <div class="setting-desc">Eine Änderung muss mindestens 2% Verbesserung bringen, um behalten zu werden.</div>
+            <div class="setting-desc">Eine Änderung muss mindestens 2% Verbesserung bringen, um behalten zu werden. Bleibt sie darunter, wird sie zurückgerollt.</div>
           </div>
           <div class="setting-row animate-in">
             <div class="setting-name">Crash-Limit</div>
@@ -653,7 +664,7 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
       <section class="screen animate-in">
         <div class="callout-success callout">
           <div class="callout-label">🛡️ Sicherheitsnetz</div>
-          <div class="callout-text">Skill Forge erstellt vor jeder Änderung eine Sicherungskopie (<span class="term" data-tooltip="Ein Snapshot ist eine vollständige Kopie deines Skills zu einem bestimmten Zeitpunkt. Du kannst jederzeit zu jedem Snapshot zurückkehren.">Snapshot</span>). Selbst nach 10 Experimenten kannst du jederzeit zum Original zurückkehren.</div>
+          <div class="callout-text">Skill Forge erstellt vor jeder Änderung eine Sicherungskopie (<span class="term" data-tooltip="Ein Snapshot ist eine vollständige Kopie deines Skills zu einem bestimmten Zeitpunkt. Du kannst jederzeit zu jedem Snapshot zurückkehren.">Snapshot</span>). Die Sicherungen heißen <code style="background:var(--color-bg-code);color:#D0D0E8;padding:2px 6px;border-radius:4px;font-family:var(--font-mono);font-size:var(--text-xs)">pre-exp-001</code>, <code style="background:var(--color-bg-code);color:#D0D0E8;padding:2px 6px;border-radius:4px;font-family:var(--font-mono);font-size:var(--text-xs)">pre-exp-002</code> und so weiter, jede ist der Zustand vor genau diesem Experiment. Selbst nach 10 Experimenten kannst du jederzeit zum Original zurückkehren.</div>
         </div>
       </section>
     </div>
@@ -678,7 +689,7 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
               <span style="color:var(--color-impulse-orange);font-size:1.2rem">▸</span>
               Kann mein Skill durch Skill Forge schlechter werden?
             </summary>
-            <div style="padding:0 var(--space-5) var(--space-4);font-size:var(--text-sm);color:var(--color-text-secondary)">Nein. Jede Änderung, die den Score verschlechtert, wird automatisch rückgängig gemacht. Zusätzlich gibt es Snapshots — du kannst jederzeit zum Ausgangszustand zurückkehren.</div>
+            <div style="padding:0 var(--space-5) var(--space-4);font-size:var(--text-sm);color:var(--color-text-secondary)">Nein. Behalten wird nur, was messbar besser ist. Verschlechterungen werden zurückgerollt, und Runden ohne messbaren Effekt ebenfalls. Zusätzlich gibt es Snapshots, du kannst jederzeit zum Ausgangszustand zurückkehren.</div>
           </details>
           <details class="faq-item" style="background:var(--color-surface);border-radius:var(--radius-md);box-shadow:var(--shadow-sm);overflow:hidden">
             <summary style="padding:var(--space-4) var(--space-5);font-family:var(--font-display);font-weight:600;cursor:pointer;list-style:none;display:flex;align-items:center;gap:var(--space-3)">

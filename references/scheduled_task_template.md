@@ -14,12 +14,20 @@ Lies den Skill 'skill-forge' und führe den autonomen Verbesserungsloop durch.
 ## Anweisungen
 1. Lies die SKILL.md des skill-forge Skills
 2. Lies die config.json im Workspace für Modus, Scope, Metrik und alle Parameter
-3. Prüfe ob {workspace_path}/history.json existiert
-   - Falls ja: Setze beim letzten Stand fort
-   - Falls nein: Starte mit Schritt 0 (Setup — Dry-Run-Validierung wiederholen)
+3. Prüfe ob {workspace_path}/checkpoint.json existiert
+   - Falls ja: Lies ihn mit `python3 scripts/composite_score.py checkpoint-info {workspace_path}`.
+     Ist `applied_but_undecided` gesetzt, rolle ZUERST auf `on_disk_version` zurück:
+     `python3 scripts/composite_score.py revert --snapshot-dir {workspace_path}/snapshots --version <on_disk_version>`
+     Erst danach weiterlaufen. Sonst misst der Lauf gegen eine bereits mutierte
+     Datei, die er für die Baseline hält.
+   - Falls nein, aber history.json existiert: Setze beim letzten Stand dort fort
+   - Falls keins von beidem: Starte mit Schritt 0, Dry-Run-Validierung wiederholen
 4. Führe den Loop aus (Schritt 1-6) bis ein Abbruchkriterium greift
 5. Generiere den Morning Report als {workspace_path}/morning-report.md
-6. Speichere die beste Version in {workspace_path}/snapshots/v{best}/
+6. Wo die beste Version liegt: Endete der Lauf mit einem KEEP, am Zielpfad selbst,
+   denn dieser Stand wurde von keinem Snapshot mehr erfasst. Andernfalls in
+   {workspace_path}/snapshots/pre-exp-<N+1>/files/, wobei N das Experiment mit dem
+   besten Score ist. Der Score selbst steht als best_score in checkpoint.json.
 ```
 
 ## Beispiel: Skill-Modus Scheduled Task
