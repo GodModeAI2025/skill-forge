@@ -1,6 +1,8 @@
 # Release Notes
 
-## v3.5 (2026-09-16): Rauschgrenze gemessen, Metrik markiert
+## Unreleased: Rauschgrenze gemessen, Metrik markiert
+
+_Versionsnummer vergibt der Owner beim Release; Stand 2026-09-16._
 
 **`noise_floor` war ein Platzhalter.** Der Key ging in die Keep-Schwelle ein,
 stand aber immer auf 0.0, und `architecture.md` führte das als offene
@@ -15,7 +17,9 @@ abgebrochener Benchmark, der mit `Error in line 42` endet, lieferte 42, und in
 `cmd | tail -1` geht der Exit-Code von `cmd` verloren. Eine Zeile
 `METRIC <name>=<zahl>` hat jetzt Vorrang, und mit `metric --name` zählt nur
 sie: fehlt sie, gibt es Exit 1 statt einer Zahl. Ohne Markierung bleibt alles
-wie bisher.
+wie bisher. Einzige Verhaltensänderung für bestehende Commands: steht im
+Output bereits eine vollständige Zeile `METRIC <name>=<zahl>`, gilt ab jetzt
+deren Wert statt der letzten Zahl.
 
 Anregung für beides: das Projekt autoresearch-with-claude-code
 (github.com/rishabhpoddar/autoresearch-with-claude-code), das Benchmarks
