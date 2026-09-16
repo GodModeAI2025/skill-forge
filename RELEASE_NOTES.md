@@ -1,5 +1,30 @@
 # Release Notes
 
+## v3.5 (2026-09-16): Rauschgrenze gemessen, Metrik markiert
+
+**`noise_floor` war ein Platzhalter.** Der Key ging in die Keep-Schwelle ein,
+stand aber immer auf 0.0, und `architecture.md` führte das als offene
+Limitierung. Der Dry-Run im Generic-Modus wiederholt den Metrik-Command jetzt
+mindestens dreimal auf unverändertem Stand; `noise-floor` macht aus der
+Spannweite (bei `--relative` bezogen auf den Median) den Wert für die
+config.json, und der Median wird Baseline. Spannweite statt
+Standardabweichung, weil drei Werte keine Standardabweichung tragen.
+
+**Die Letzte-Zahl-Regel machte Fehlermeldungen zu Messwerten.** Ein
+abgebrochener Benchmark, der mit `Error in line 42` endet, lieferte 42, und in
+`cmd | tail -1` geht der Exit-Code von `cmd` verloren. Eine Zeile
+`METRIC <name>=<zahl>` hat jetzt Vorrang, und mit `metric --name` zählt nur
+sie: fehlt sie, gibt es Exit 1 statt einer Zahl. Ohne Markierung bleibt alles
+wie bisher.
+
+Anregung für beides: das Projekt autoresearch-with-claude-code
+(github.com/rishabhpoddar/autoresearch-with-claude-code), das Benchmarks
+`METRIC name=value` drucken, bei kaputter Umgebung laut scheitern und bei
+schnellen Workloads den Median mehrerer Läufe melden lässt. Kein Code
+übernommen.
+
+12 neue Tests, 283 insgesamt.
+
 ## v3.4 (2026-07-29): Härtung nach der adversarialen Review
 
 Fünf unabhängige Prüfungen über Block 2 bis 4: Code je Block, Doku gegen Code,

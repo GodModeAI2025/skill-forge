@@ -13,7 +13,12 @@ from pathlib import Path
 
 import pytest
 
-from scripts.composite_score import calc_generic_delta, extract_metric_value
+from scripts.composite_score import (
+    calc_generic_delta,
+    decide,
+    extract_metric_value,
+    measure_noise_floor,
+)
 
 SCRIPT = str(Path(__file__).resolve().parent.parent / "scripts" / "composite_score.py")
 
@@ -240,3 +245,79 @@ def test_the_documented_snapshot_revert_cycle(tmp_path):
     assert run("revert", "--snapshot-dir", str(snap),
                "--version", "pre-exp-001").returncode == 0
     assert target.read_text() == "# Baseline\n"
+
+
+# ─── METRIC-Markierung und Rauschgrenze ───────────────────────────────────
+
+
+def test_metric_marker_beats_the_last_number():
+    output = "METRIC coverage=82.5\nfertig nach 3 Durchläufen, Log in run-17.txt\n"
+    assert extract_metric_value(output) == pytest.approx(82.5)
+
+
+def test_metric_marker_last_line_wins_and_name_filters():
+    output = "METRIC p95=410\nMETRIC score=0.71\nMETRIC score=0.74\n"
+    assert extract_metric_value(output) == pytest.approx(0.74)
+    assert extract_metric_value(output, "p95") == pytest.approx(410.0)
+
+
+def test_metric_name_without_marker_gives_no_value():
+    # Ein abgebrochener Benchmark endet mit einer Zeilennummer. Mit --name darf
+    # daraus kein Messwert werden.
+    assert extract_metric_value("Traceback ... Error in line 42", "score") is None
+    assert extract_metric_value("METRIC p95=410", "score") is None
+
+
+def test_metric_marker_accepts_exponent_and_sign():
+    assert extract_metric_value("METRIC loss=-1.5e-3") == pytest.approx(-0.0015)
+
+
+def test_metric_cli_with_name_exits_one_on_missing_marker():
+    proc = run("metric", "Error in line 42", "--baseline", "10", "--name", "score")
+    assert proc.returncode == 1
+    assert "METRIC score" in proc.stderr
+
+
+def test_metric_cli_with_name_uses_marker():
+    proc = run("metric", "METRIC score=12\nline 99", "--baseline", "10",
+               "--name", "score")
+    assert proc.returncode == 0
+    assert json.loads(proc.stdout)["current_value"] == pytest.approx(12.0)
+
+
+def test_noise_floor_is_the_spread():
+    result = measure_noise_floor([72.5, 71.8, 72.9])
+    assert result["median"] == pytest.approx(72.5)
+    assert result["spread"] == pytest.approx(1.1)
+    assert result["noise_floor"] == pytest.approx(1.1)
+
+
+def test_noise_floor_relative_matches_decide_relative():
+    result = measure_noise_floor([100, 104, 98, 102], relative=True)
+    assert result["median"] == pytest.approx(101.0)
+    assert result["noise_floor"] == pytest.approx(6 / 101, abs=1e-6)
+    # Ein Delta innerhalb der gemessenen Streuung darf kein KEEP werden.
+    d = decide(104, 101, noise_floor=result["noise_floor"], relative=True)
+    assert d["decision"] == "NEUTRAL"
+    assert d["binding_threshold"] == "noise_floor"
+
+
+def test_noise_floor_relative_on_zero_median_falls_back():
+    result = measure_noise_floor([0, 0, 1], relative=True)
+    assert result["relative_fallback"] is True
+    assert result["noise_floor"] == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("values", [[1.0, 2.0], [1.0, float("nan"), 2.0]])
+def test_noise_floor_rejects_too_few_or_broken_values(values):
+    with pytest.raises(ValueError):
+        measure_noise_floor(values)
+
+
+def test_noise_floor_cli():
+    proc = run("noise-floor", "10", "11", "12", "--relative")
+    assert proc.returncode == 0
+    assert json.loads(proc.stdout)["noise_floor"] == pytest.approx(0.181818, abs=1e-6)
+    short = run("noise-floor", "10", "11")
+    assert short.returncode == 2
+    assert "Traceback" not in short.stderr

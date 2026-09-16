@@ -886,11 +886,12 @@ CLI: `python3 scripts/composite_score.py group-history <history-path>`
   Schlechte Evals → Optimierung auf falsche Ziele.
 - **Command-Stabilität**: Im Generic-Modus muss der Metrik-Command deterministisch
   sein. Flaky Commands führen zu falschen KEEP/REVERT-Entscheidungen.
-- **Rauschgrenze ungemessen**: `noise_floor` ist als Config-Key vorhanden und geht
-  über `threshold = max(improvement_threshold, noise_floor, resolution)` in die Entscheidung
-  ein, steht aber auf 0.0 und hat damit derzeit keine Wirkung. Der Wert ist ein
-  Platzhalter. Wie stark der Score zwischen zwei identischen Läufen streut, ist
-  bisher nicht gemessen worden; das passiert erst mit Block 2. Bis dahin gilt:
-  eine Keep-Schwelle von 0.02 ist eine Setzung, keine Ableitung aus Messdaten, und
-  bei Evals mit wenigen Assertions kann eine einzelne gekippte Assertion sie
-  bereits überschreiten.
+- **Rauschgrenze nur im Generic-Modus gemessen**: `noise_floor` geht über
+  `threshold = max(improvement_threshold, noise_floor, resolution)` in die
+  Entscheidung ein. Im Generic-Modus misst der Dry-Run sie mit `noise-floor`
+  aus mindestens drei Läufen auf unverändertem Stand (Spannweite, bei
+  `--relative` bezogen auf den Median). Im Skill-Modus steht sie weiter auf
+  0.0: drei komplette Eval-Durchläufe nur für die Streuung sind teuer, und die
+  Auflösungsgrenze `2 / N_assertions` fängt dort den gröbsten Teil ab. Wer die
+  Kosten tragen will, kann `noise-floor` mit den Gate-Scores wiederholter
+  Baseline-Läufe füttern.
