@@ -134,15 +134,100 @@ def calc_composite_score(
 # ─── Generic-Modus Scoring ────────────────────────────────────────────────
 
 
-def extract_metric_value(output: str) -> float | None:
+METRIC_LINE = re.compile(
+    r"^\s*METRIC\s+([A-Za-z0-9_.-]+)\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)"
+    r"(?:[eE][-+]?\d+)?)\s*$",
+    re.MULTILINE,
+)
+
+
+def extract_metric_value(output: str, name: str | None = None) -> float | None:
     """Extrahiere einen einzelnen Zahlenwert aus Command-Output.
 
-    Sucht nach der letzten Zahl im Output (Float oder Int).
+    Enthält der Output mindestens eine Zeile ``METRIC <name>=<zahl>``, gilt
+    ausschliesslich diese Markierung: die letzte passende Zeile, bei gesetztem
+    ``name`` die letzte mit genau diesem Namen. Ohne Markierung sucht die
+    Funktion wie bisher die letzte Zahl im Output.
+
+    Warum die Markierung Vorrang hat: die Letzte-Zahl-Regel macht aus jeder
+    Fehlermeldung einen Messwert. ``Error in line 42`` am Ende eines
+    abgebrochenen Benchmarks ergibt 42, und in einer Pipeline wie
+    ``cmd | tail -1`` geht der Exit-Code des Benchmarks verloren. Mit
+    Markierung liefert derselbe Abbruch keinen Wert, und `metric` endet mit
+    Exit 1 statt mit einer erfundenen Zahl.
+
+    Ist ein ``name`` gesetzt, zählen nur Markierungen mit diesem Namen. Fehlt
+    eine solche Zeile, ist das Ergebnis ``None``, auch wenn andere Zahlen im
+    Output stehen. Ein Rückfall auf die letzte Zahl wäre genau die
+    Verwechslung, die die Markierung verhindern soll.
     """
+    marked = METRIC_LINE.findall(output)
+    if name is not None:
+        marked = [(n, v) for n, v in marked if n == name]
+        return float(marked[-1][1]) if marked else None
+    if marked:
+        return float(marked[-1][1])
     numbers = re.findall(r"[-+]?\d*\.?\d+", output)
     if not numbers:
         return None
     return float(numbers[-1])
+
+
+def measure_noise_floor(values: list, relative: bool = False) -> dict:
+    """Rauschgrenze aus wiederholten Messungen desselben, unveränderten Stands.
+
+    Der Wert ist die Spannweite (max - min) der Wiederholungen, bei
+    ``relative=True`` geteilt durch den Betrag des Medians. Die Spannweite ist
+    bewusst grob: sie ist das Delta, das der Loop ohne jede Mutation bereits
+    gesehen hat, und genau dieses Delta darf kein KEEP auslösen. Eine
+    Standardabweichung aus drei Werten wäre eine Scheingenauigkeit.
+
+    ``relative`` muss zu ``decide --relative`` passen. Im Generic-Modus rechnet
+    decide relativ zur Baseline, eine absolute Spannweite von 0.4 Sekunden
+    wäre dort als noise_floor um Grössenordnungen falsch.
+
+    Mindestens drei Werte: aus zweien lässt sich keine Streuung ablesen, die
+    beim dritten Lauf nicht schon wieder überschritten ist.
+    """
+    nums = []
+    for value in values:
+        number = float(value)
+        if math.isnan(number) or math.isinf(number):
+            raise ValueError("Messwert %r ist keine endliche Zahl" % (value,))
+        nums.append(number)
+    if len(nums) < 3:
+        raise ValueError(
+            "mindestens 3 Wiederholungen nötig, erhalten: %d" % len(nums)
+        )
+    ordered = sorted(nums)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        median = ordered[mid]
+    else:
+        median = (ordered[mid - 1] + ordered[mid]) / 2
+    spread = ordered[-1] - ordered[0]
+    relative_fallback = False
+    noise_floor = spread
+    if relative:
+        if abs(median) < 1e-9:
+            relative_fallback = True
+        else:
+            noise_floor = spread / abs(median)
+    return {
+        "runs": len(nums),
+        "values": nums,
+        "median": round(median, 6),
+        "min": ordered[0],
+        "max": ordered[-1],
+        "spread": round(spread, 6),
+        "relative": relative,
+        "relative_fallback": relative_fallback,
+        "noise_floor": round(noise_floor, 6),
+        "note": (
+            "Als noise_floor in die config.json übernehmen. Die Baseline ist "
+            "der Median, nicht der erste Lauf."
+        ),
+    }
 
 
 def calc_generic_delta(
@@ -2660,6 +2745,24 @@ def main():
              "keinen Metrikwert, sondern INVALID.",
     )
     metric_parser.add_argument("--invariant-command", dest="invariant_command")
+    metric_parser.add_argument(
+        "--name", dest="metric_name",
+        help="Nur Zeilen 'METRIC <name>=<zahl>' mit diesem Namen werten",
+    )
+
+    # Rauschgrenze messen
+    noise_parser = subparsers.add_parser(
+        "noise-floor",
+        help="Rauschgrenze aus wiederholten Messungen ohne Mutation bestimmen",
+    )
+    noise_parser.add_argument(
+        "values", nargs="+",
+        help="Messwerte derselben unveränderten Version (mindestens 3)",
+    )
+    noise_parser.add_argument(
+        "--relative", action="store_true",
+        help="Spannweite relativ zum Median, passend zu decide --relative",
+    )
 
     # TSV initialisieren
     tsv_init_parser = subparsers.add_parser("tsv-init", help="TSV-Log initialisieren")
@@ -2816,6 +2919,14 @@ def main():
             ),
         }, indent=2, ensure_ascii=False))
 
+    elif args.command == "noise-floor":
+        try:
+            result = measure_noise_floor(args.values, args.relative)
+        except ValueError as exc:
+            print("Fehler: %s" % exc, file=sys.stderr)
+            sys.exit(2)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+
     elif args.command == "split-assign":
         data = json.loads(Path(args.evals_path).read_text())
         evals = data["evals"] if isinstance(data, dict) else data
@@ -2908,9 +3019,13 @@ def main():
                     indent=2, ensure_ascii=False,
                 ))
                 sys.exit(3)
-        value = extract_metric_value(output)
+        value = extract_metric_value(output, args.metric_name)
         if value is None:
-            print("Fehler: Keine Zahl im Output gefunden", file=sys.stderr)
+            if args.metric_name:
+                print("Fehler: Keine Zeile 'METRIC %s=<zahl>' im Output gefunden"
+                      % args.metric_name, file=sys.stderr)
+            else:
+                print("Fehler: Keine Zahl im Output gefunden", file=sys.stderr)
             sys.exit(1)
         result = calc_generic_delta(value, args.baseline, args.direction)
         print(json.dumps(result, indent=2))

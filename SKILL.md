@@ -221,10 +221,20 @@ Im Guided-Modus: Zeige dem User die generierten/vorhandenen Evals und frage:
   oder `coverageThreshold` senken. Für Bundle-Size: Features rauswerfen. Alle
   drei verbessern die Zahl und verschlechtern die Software. Der Exit-Code fängt
   nichts davon ab, bei `flake8 src/ | wc -l` ist er ohnehin immer der von `wc`.
-- Hinweis: Der Metrik-Parser extrahiert die **letzte Zahl** im Command-Output.
-  Falls der Command Fortschrittsmeldungen oder Zeilennummern ausgibt, sollte
-  der User den Output so filtern, dass nur die relevante Zahl am Ende steht
-  (z.B. mit `| tail -1` oder `| grep "Score"`).
+- Hinweis: Der Metrik-Parser extrahiert ohne Markierung die **letzte Zahl** im
+  Command-Output. Falls der Command Fortschrittsmeldungen oder Zeilennummern
+  ausgibt, sollte der User den Output so filtern, dass nur die relevante Zahl am
+  Ende steht (z.B. mit `| tail -1` oder `| grep "Score"`).
+- Empfohlen, sobald der Command mehr als eine Zahl ausgibt: ein kleines
+  Mess-Script, das den Wert als eigene Zeile `METRIC <metric_name>=<zahl>`
+  druckt und bei kaputter Umgebung mit Exit ungleich 0 abbricht, statt einen
+  schlechten Wert zu melden. Dann bekommt jeder `metric`-Aufruf zusätzlich
+  `--name <metric_name>`, und nur diese Zeile zählt. Grund: die
+  Letzte-Zahl-Regel macht aus `Error in line 42` den Messwert 42, und in
+  `cmd | tail -1` geht der Exit-Code von `cmd` verloren. Ein Loop, der einen
+  Umgebungsfehler als Verschlechterung liest, verwirft eine gute Mutation.
+  Weitere Zeilen im Output (Teilergebnisse, langsamste Schritte) bleiben
+  erlaubt und sind Kontext für den Hypothesis-Agent.
 
 
 Speichere:
@@ -279,7 +289,22 @@ Evals, bevor der Loop startet.
 1. Führe den Metrik-Command aus
 2. Prüfe: Exit-Code ist 0
 3. Prüfe: Output enthält eine parsbare Zahl
-4. Speichere Baseline-Wert
+4. Führe den Command auf demselben, unveränderten Stand mindestens zwei weitere
+   Male aus und miss die Rauschgrenze:
+
+   ```bash
+   python3 scripts/composite_score.py noise-floor 72.5 71.8 72.9 --relative
+   ```
+
+   `--relative` gehört dazu, weil `decide` im Generic-Modus relativ rechnet.
+   Die Ausgabe `noise_floor` wandert in die config.json, `median` wird der
+   Baseline-Wert. Ohne diesen Schritt bleibt `noise_floor` bei 0.0, und eine
+   Metrik, die zwischen zwei identischen Läufen um 3 % streut, liefert bei
+   einer Keep-Schwelle von 2 % Zufalls-KEEPs. Ist die Rauschgrenze größer als
+   die Verbesserung, die der User erwartet, sag das vor dem Start: dann muss
+   der Command stabiler werden (Median über mehrere Läufe im Mess-Script,
+   kleinerer, aber fester Workload), nicht der Loop länger laufen.
+5. Speichere Baseline-Wert (Median) und `noise_floor`
 
 **Bei Fehler:**
 - Zeige dem User die genaue Fehlermeldung
@@ -292,6 +317,7 @@ Speichere:
 {
   "dry_run_passed": true,
   "baseline_value": 72.5,
+  "noise_floor": 0.015172,
   "dry_run_output": "Vollständiger Output des Commands",
   "dry_run_timestamp": "2026-03-14T21:45:00Z"
 }
@@ -645,8 +671,13 @@ Exit 2 ab.
 <metrik-command> | python3 scripts/composite_score.py metric - \
   --baseline <wert> --direction <richtung> \
   --invariants-before <workspace>/experiments/exp-<NNN>/invariants.json \
-  --invariant-command "<invariant_command>"
+  --invariant-command "<invariant_command>" \
+  [--name <metric_name>]
 ```
+
+   `--name` nur, wenn der Command `METRIC <metric_name>=<zahl>` druckt. Dann
+   liefert ein Output ohne diese Zeile keinen Wert, sondern Exit 1, und das
+   wird wie ein Crash behandelt.
 
    Ohne bestandene Prüfung liefert der Befehl keinen Metrikwert, sondern
    `{"decision": "INVALID"}` und Exit 3. Das ist Absicht: sonst könnte der
@@ -1107,7 +1138,7 @@ Standardwerte, die der User überschreiben kann:
 | `improvement_threshold` | 0.02 | Minimum-Delta zum Behalten |
 | `regression_threshold` | 0.05 | Maximum-Delta vor Revert |
 | `near_miss_band` | 0.02 | Breite des Bands unter der Keep-Schwelle, das `near_miss` setzt |
-| `noise_floor` | 0.0 | Gemessenes Rauschen der Metrik; die effektive Keep-Schwelle ist `max(improvement_threshold, noise_floor, resolution)` |
+| `noise_floor` | 0.0 | Gemessenes Rauschen der Metrik, im Generic-Modus vom Dry-Run per `noise-floor` gesetzt; die effektive Keep-Schwelle ist `max(improvement_threshold, noise_floor, resolution)` |
 | `gate_weights` | nicht gesetzt | Gate-Gewichtung. **Ohne den Key** gilt automatisch `{assertions: 1.0, judge: 0.0}`, mit `use_comparator` `{assertions: 0.65, judge: 0.35}`. Ein gesetzter Key gewinnt IMMER, auch gegen `use_comparator`. Wer ihn auf `{assertions: 1.0, judge: 0.0}` setzt und den Comparator einschaltet, zahlt für Judge-Läufe und bekommt reine Assertions. |
 | `workspace_path` | (absoluter Pfad) | Workspace-Verzeichnis, vom Wizard gesetzt |
 | `target_path` | (absoluter Pfad) | Optimierungsziel, vom Wizard gesetzt |

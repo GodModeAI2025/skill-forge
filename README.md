@@ -52,6 +52,14 @@ fall into four groups.
   the comparator. Efficiency is still measured and reported; it just stopped
   deciding. Two constructed runs with identical assertions came out 0.045 apart
   on token and duration noise alone, against a keep threshold of 0.02.
+- **Measured noise floor.** In generic mode the dry run repeats the metric
+  command on the unchanged state and `noise-floor` turns the spread into the
+  `noise_floor` config value. Until then the key sat at 0.0, and a metric that
+  wobbles 3 % between identical runs produced random KEEPs against a 2 %
+  threshold.
+- **Marked metrics.** A line `METRIC <name>=<number>` beats the last-number
+  rule, and `metric --name` accepts nothing else. Otherwise `Error in line 42`
+  from a crashed benchmark becomes the score 42.
 - **`--side` in scoring.** Candidate and baseline are scored separately. v2
   collected both with one `rglob` and averaged them into a single number.
 - **Real three-way split.** train (50%) feeds hypotheses, val (25%) decides
@@ -101,7 +109,7 @@ fall into four groups.
 
 ### And it is tested
 
-271 tests under `tests/` (`python3 -m pytest tests/ -q`), including `test_review_findings.py`, which pins every
+283 tests under `tests/` (`python3 -m pytest tests/ -q`), including `test_review_findings.py`, which pins every
 defect two adversarial review rounds found in this code. A mutation test over 69
 targeted code changes drove the remaining blind spots out.
 
@@ -189,7 +197,8 @@ goes through one of them.
 | `rejected-append` / `rejected-format` | Verbatim record of every non-KEEP, rendered into the next prompt |
 | `artifact-stats` | Token budget across SKILL.md, `references/` and `scripts/` |
 | `invariants-snapshot` / `invariants-check` | Reward-hacking guard for generic mode |
-| `metric` | Extracts the number, refuses one when the invariants broke |
+| `metric` | Extracts the number (`METRIC <name>=<n>` first, `--name` for marker only), refuses one when the invariants broke |
+| `noise-floor` | Spread of repeated runs on the unchanged state, relative with `--relative` |
 | `tsv-init` / `tsv-append` | Flat log, direction-aware |
 | `coverage-init` / `coverage-update` | Coverage matrix with saturation |
 | `compact` / `agent-history` / `group-history` | History views for the agents |
@@ -526,7 +535,7 @@ file against a baseline it no longer matches.
 python3 -m pytest tests/ -q
 ```
 
-271 tests across ten files. They cover the decision cascade and its threshold edge cases,
+283 tests across ten files. They cover the decision cascade and its threshold edge cases,
 gate scoring and `--side`, the three-way split, diff and comparison, protected regions and
 the appendix, the rejected buffer, the token budget, the invariant checks, generic mode,
 and every CLI exit code.
