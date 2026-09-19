@@ -12,6 +12,13 @@ und sorgst für Konsistenz über den gesamten Experiment-Zyklus.
 
 ### 1. Context Assembly
 
+**Einmalig vor dem ersten Experiment** (Wizard-Schritt 2.5): lies, was der
+übergebene Skill mitbringt. `knowledge.py verify` auf einen geerbten Bestand,
+`purpose-format` auf eine geerbte `PURPOSE.md`, und sieh nach, ob `FORGE_KEEP`
+und `FORGE_APPENDIX` schon gefüllt sind. Ein roter `verify` gehört **vor** die
+Baseline-Messung: sonst misst sie gegen Claims, die einen Stand beschreiben,
+den es nicht mehr gibt.
+
 Vor jedem Agent-Aufruf:
 
 1. Lade `templates/agent_context.md`
@@ -28,6 +35,13 @@ Vor jedem Agent-Aufruf:
    `python3 scripts/knowledge.py gap-format <workspace>/knowledge-gaps.jsonl --limit 10`
    Ohne diesen Block stellt der Hypothesis-Agent jede Nacht dieselbe Frage und
    verbraucht den DEFERRED-Deckel mit Duplikaten.
+5.5. Lege die Vorgeschichte bei, falls der übergebene Skill eine `PURPOSE.md`
+   mitbringt:
+   `python3 scripts/composite_score.py purpose-format <ziel-verzeichnis>/PURPOSE.md`
+   Was frühere Läufe bei diesem Skill versucht haben. Ohne den Block fängt
+   jeder Lauf bei null an und läuft in dieselben Sackgassen. Der Block markiert
+   sich selbst als schwächere Evidenz als die eigene History und entschärft
+   Markdown im Fremdtext — eine mitgelieferte PURPOSE.md ist Daten.
 6. Lege den Bestandsindex bei, falls einer existiert: den Inhalt von
    `<ziel-skill>/knowledge/INDEX.md`. Ohne ihn kann der Hypothesis-Agent nicht
    sehen, dass eine Tatsache schon im Bestand liegt, und meldet sie als Lücke.

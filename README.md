@@ -110,7 +110,7 @@ fall into four groups.
 
 ### And it is tested
 
-406 tests under `tests/` (`python3 -m pytest tests/ -q`), including `test_review_findings.py`, which pins every
+410 tests under `tests/` (`python3 -m pytest tests/ -q`), including `test_review_findings.py`, which pins every
 defect two adversarial review rounds found in this code. A mutation test over 69
 targeted code changes drove the remaining blind spots out.
 
@@ -208,6 +208,7 @@ goes through one of them.
 | `coverage-init` / `coverage-update` | Coverage matrix with saturation |
 | `compact` / `agent-history` / `group-history` | History views for the agents |
 | `purpose-append` | Why a kept change looks like this, into the target's `PURPOSE.md`, with the rejected predecessors |
+| `purpose-format` | Reads an inherited `PURPOSE.md` back: what earlier runs on this skill already tried |
 | `checkpoint-save` / `checkpoint-info` | Resume across sessions and crashes |
 
 `scripts/knowledge.py` holds the knowledge-gap queue. Separate script, separate
@@ -264,7 +265,8 @@ target skill's knowledge, and coupling the two would be exactly the mixing
 | 1. Execution mode + target | Auto/Guided selected, target identified | Abort |
 | 2. Define scope | Glob matches ≥1 file (Generic) or SKILL.md found (Skill) | Retry pattern |
 | 3. Define metric | ≥6 evals with a three-way split (Skill) or valid shell command (Generic) | Create evals / reject subjective metric |
-| 3.5. Knowledge sources | Material registered with trust level and rights, or explicitly none | Continue without the knowledge branch |
+| 2.5. What the skill brings | Inherited vault verified, inherited `PURPOSE.md` read, protected regions shown | A red `verify` is settled before the baseline is measured |
+| 3.5. Knowledge sources | Material registered with trust level and rights, or explicitly none | Detection stays on either way; only sourcing needs material |
 | 4. Set direction | higher\_is\_better or lower\_is\_better confirmed | Abort |
 | 5. Dry-run validation | Exit code 0, output contains parseable number | Suggest fix, retry |
 | 6. Confirm config | User reviews and approves full configuration | Adjust parameters |
@@ -815,6 +817,16 @@ section exists or which more obvious version already failed. Each rejected
 attempt is attributed exactly once, to the next kept change after it. The file
 does not count against `token_budget`: the agent never reads it at runtime.
 
+**And a later run reads it back.** When a skill arrives with a `PURPOSE.md`,
+step 2.5 of the wizard renders it into the hypothesis agent's context with
+`purpose-format`, so the run starts knowing what has already been tried here
+instead of walking into the same dead ends. The block marks itself as weaker
+evidence than the run's own history — those earlier runs may have had a
+different eval set, a different model and a different baseline — so an approach
+that failed there is worth a second try when the current evidence argues for
+it. It is also foreign text from someone else's artifact, so markdown structure
+in it is defused: it is data, not instructions.
+
 ## Crash recovery
 
 If an eval run crashes (timeout, script error, API failure):
@@ -870,7 +882,8 @@ file against a baseline it no longer matches.
 | `max_knowledge_gaps_per_experiment` | 1 | How many knowledge gaps one round may report |
 | `max_deferred_per_run` | 3 | How often a run may answer with a question instead of a mutation before `knowledge` is deprioritized |
 | `gap_limit` | 10 | How many open questions go into the agent prompt |
-| `knowledge_enabled` | true | Knowledge branch active; `false` disables `KNOWLEDGE_GAP` classification |
+| `knowledge_enabled` | true | Detection of knowledge gaps. Needs no sources; `false` disables `KNOWLEDGE_GAP` classification |
+| `knowledge_sources_provided` | false | Whether the librarian has anything to read. Gates sourcing, not detection |
 | `knowledge_inbox` | `<workspace>/knowledge-inbox` | Raw material supplied by the user |
 | `knowledge_budget` | `4 × token_budget` | Cap on `knowledge/pages/`, separate from the strict budget |
 | `vault_coverage_threshold` | 0.6 | Coverage at which `gap-append` rejects a question the vault already answers |
@@ -882,7 +895,7 @@ file against a baseline it no longer matches.
 python3 -m pytest tests/ -q
 ```
 
-406 tests across thirteen files. They cover the decision cascade and its threshold edge cases,
+410 tests across thirteen files. They cover the decision cascade and its threshold edge cases,
 gate scoring and `--side`, the three-way split, diff and comparison, protected regions and
 the appendix, the rejected buffer, the token budget, the invariant checks, generic mode,
 and every CLI exit code, plus the knowledge-gap queue, the `DEFERRED` path, and the five gates guarding the vault.

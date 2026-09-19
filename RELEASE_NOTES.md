@@ -308,7 +308,42 @@ heissen, dass der Claim überflüssig ist, oder dass die Evals sein Thema nicht
 abdecken, oder dass der Index ihn nicht findet. Löschen behebt nur den ersten
 Fall. Ein bereits als veraltet markierter Claim erscheint nicht erneut.
 
-6 neue Tests. Die Suite steht damit bei 406.
+6 neue Tests.
+
+**Die Maschinerie wurde gebaut und auf übergebene Skills nicht angewendet.**
+Drei Lücken auf dem Weg vom „hier ist mein Skill" bis zur ersten Runde, alle
+drei mit demselben Muster: etwas liegt vor und wird nicht gelesen.
+
+`PURPOSE.md` wurde geschrieben und nie zurückgelesen. Die Datei reist mit dem
+Skill und hält fest, was bei ihm schon versucht wurde und was davon gescheitert
+ist — genau die Information, die einen neuen Lauf vor denselben Sackgassen
+bewahrt. Neu ist `purpose-format`: der Block geht ab Runde 1 in den
+Hypothesis-Kontext. Er markiert sich selbst als schwächere Evidenz als die
+eigene History, weil jene Läufe womöglich ein anderes Eval-Set, ein anderes
+Modell und eine andere Baseline hatten; ein dort gescheiterter Ansatz ist einen
+zweiten Versuch wert, wenn die aktuelle Evidenz für ihn spricht. Und weil die
+Datei aus einem fremden Artefakt stammt, wird Markdown-Struktur darin
+entschärft — sie ist Daten, keine Anweisung.
+
+Der Wizard sah einen übergebenen Skill nicht an. Schritt 2 prüfte, ob die
+SKILL.md existiert und lesbar ist, mehr nicht. Ein Skill bringt aber oft einen
+Wissensbestand, eine `PURPOSE.md` und gefüllte geschützte Regionen aus einem
+früheren Lauf mit. Neuer Schritt 2.5 liest das alles, bevor der Loop startet.
+Wichtig ist dabei die Reihenfolge: ein roter `verify` auf einem geerbten
+Bestand gehört **vor** die Baseline-Messung, sonst misst sie gegen Claims, die
+einen Stand beschreiben, den es nicht mehr gibt — und jedes spätere Delta
+vergleicht gegen diese Messung.
+
+Und der Wizard schaltete die Erkennung ab, wenn der User keine Quellen hatte.
+Wer auf „Gibt es Material, das dieser Skill kennen muss?" mit „nein" antwortete,
+bekam `knowledge_enabled: false` und damit keine einzige Wissenslücke gemeldet.
+Das war rückwärts: die Erkennung braucht keine Quelle, sie stellt eine Frage
+statt sie zu beantworten. Wer „nein" sagt, ist genau der Fall, für den der Zweig
+gebaut ist — wüsste er, welche Tatsache fehlt, stünde sie schon im Skill. Die
+Erkennung bleibt jetzt an, und nur die Beschaffung hängt an vorhandenem
+Material (`knowledge_sources_provided`).
+
+4 neue Tests. Die Suite steht damit bei 410.
 
 ## v3.4 (2026-07-29): Härtung nach der adversarialen Review
 

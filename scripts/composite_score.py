@@ -2304,6 +2304,17 @@ PURPOSE_ENTRY_RE = re.compile(
 )
 
 
+PURPOSE_HEAD_RE = re.compile(
+    r"^## (?P<experiment>exp-\d+) — (?P<category>[^—]+) — "
+    r"(?P<mutation_type>[^—]+) — (?P<date>\S+)\s*$"
+)
+PURPOSE_FIELD_RE = re.compile(r"^\*\*(?P<key>[^:*]+):\*\*\s*(?P<value>.+)$")
+PURPOSE_REJECTED_RE = re.compile(
+    r"^- (?P<experiment>exp-\d+) (?P<mutation_type>\S+) (?P<decision>[A-Z_]+)"
+    r"(?: \((?P<delta>[-+][0-9.]+)\))? — (?P<hypothesis>.+)$"
+)
+
+
 def read_purpose_entries(purpose_path: str) -> list:
     """Bereits verzeichnete Einträge als ``[{experiment, category}]``."""
     path = Path(purpose_path)
@@ -2314,6 +2325,87 @@ def read_purpose_entries(purpose_path: str) -> list:
          "category": m.group("category").strip()}
         for m in PURPOSE_ENTRY_RE.finditer(path.read_text(encoding="utf-8"))
     ]
+
+
+def read_purpose(purpose_path: str) -> list:
+    """Vollständige Einträge samt verworfener Vorversuche.
+
+    Gegenstück zu ``append_purpose``. Gebraucht wird es bei der Aufnahme eines
+    **übergebenen** Skills: dort steht auf der Platte, was frühere Läufe schon
+    versucht haben, und ohne diese Funktion läse es niemand.
+    """
+    path = Path(purpose_path)
+    if not path.exists():
+        return []
+    entries, current = [], None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        head = PURPOSE_HEAD_RE.match(line)
+        if head:
+            current = {
+                "experiment": head.group("experiment"),
+                "category": head.group("category").strip(),
+                "mutation_type": head.group("mutation_type").strip(),
+                "date": head.group("date").strip(),
+                "fields": {}, "rejected": [],
+            }
+            entries.append(current)
+            continue
+        if current is None:
+            continue
+        field = PURPOSE_FIELD_RE.match(line)
+        if field:
+            current["fields"][field.group("key").strip()] = field.group("value").strip()
+            continue
+        rejected = PURPOSE_REJECTED_RE.match(line)
+        if rejected:
+            current["rejected"].append({
+                "experiment": rejected.group("experiment"),
+                "mutation_type": rejected.group("mutation_type"),
+                "decision": rejected.group("decision"),
+                "delta": rejected.group("delta"),
+                "hypothesis": rejected.group("hypothesis").strip(),
+            })
+    return entries
+
+
+PURPOSE_INHERITED_HEADER = (
+    "Aus der PURPOSE.md des Ziel-Skills: was frühere Läufe hier schon versucht "
+    "haben. Das ist **schwächere Evidenz als die eigene History** — jene Läufe "
+    "hatten womöglich ein anderes Eval-Set, ein anderes Modell und eine andere "
+    "Baseline. Als Hinweis lesen, nicht als Regel: ein hier verworfener Ansatz "
+    "ist einen zweiten Versuch wert, wenn die aktuelle Evidenz für ihn spricht. "
+    "Wiederhole ihn aber nicht unbesehen."
+)
+
+
+def format_purpose(purpose_path: str, limit: int = 10) -> str:
+    """Prompt-Block über die Vorgeschichte eines übergebenen Skills.
+
+    Der Inhalt stammt aus einem fremden Artefakt und wird wie jeder Fremdtext
+    einzeilig und ohne Markdown-Struktur eingesetzt — eine PURPOSE.md, die ein
+    Dritter mitgeliefert hat, ist Daten, keine Anweisung.
+    """
+    entries = read_purpose(purpose_path)
+    if not entries:
+        return ""
+    kept = entries[-limit:] if limit else entries
+    lines = [PURPOSE_INHERITED_HEADER, "", "Hat hier genommen:"]
+    for entry in kept:
+        lines.append("- %s %s/%s%s — %s" % (
+            entry["experiment"], entry["category"], entry["mutation_type"],
+            (" " + entry["fields"]["Score"]) if "Score" in entry["fields"] else "",
+            _flatten(entry["fields"].get("Hypothese", "ohne Angabe")),
+        ))
+    rejected = [r for e in kept for r in e["rejected"]]
+    if rejected:
+        lines += ["", "Ist hier gescheitert:"]
+        for row in rejected[-limit:]:
+            lines.append("- %s %s %s%s — %s" % (
+                row["experiment"], row["mutation_type"], row["decision"],
+                (" (%s)" % row["delta"]) if row["delta"] else "",
+                _flatten(row["hypothesis"]),
+            ))
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def _exp_number(experiment_id: str) -> int:
@@ -2797,6 +2889,13 @@ def main():
     purpose_parser.add_argument("--knowledge", action="append", default=[])
     purpose_parser.add_argument("--pattern")
 
+    purpose_fmt = subparsers.add_parser(
+        "purpose-format",
+        help="Vorgeschichte eines übergebenen Skills als Prompt-Block",
+    )
+    purpose_fmt.add_argument("purpose_path")
+    purpose_fmt.add_argument("--limit", type=int, default=10)
+
     plateau_parser = subparsers.add_parser(
         "plateau", help="Prüfen, ob die letzten N Entscheidungen ein Plateau sind"
     )
@@ -3162,6 +3261,11 @@ def main():
             knowledge=args.knowledge, pattern=args.pattern,
         )
         print(json.dumps(result, indent=2, ensure_ascii=False))
+
+    elif args.command == "purpose-format":
+        block = format_purpose(args.purpose_path, limit=args.limit)
+        if block:
+            print(block, end="")
 
     elif args.command == "plateau":
         history = json.loads(Path(args.history_path).read_text())
