@@ -361,8 +361,8 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
       </section>
 
       <section class="screen animate-in">
-        <h2 class="screen-heading">Five Helpers Behind the Scenes</h2>
-        <p>Skill Forge uses five specialized <span class="term" data-tooltip="An Agent is an AI module with a clearly defined task. Each agent reads inputs, processes them, and returns a structured result.">Agents</span> that work together:</p>
+        <h2 class="screen-heading">Six Helpers Behind the Scenes</h2>
+        <p>Skill Forge uses six specialized <span class="term" data-tooltip="An Agent is an AI module with a clearly defined task. Each agent reads inputs, processes them, and returns a structured result.">Agents</span>. Four run every round, the archivist every fifth round, and the librarian only when a fact is missing:</p>
         <div class="card-grid stagger-children">
           <div class="card animate-in">
             <div class="card-icon">🔬</div>
@@ -388,6 +388,11 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
             <div class="card-icon">📜</div>
             <div class="card-title">The Archivist</div>
             <div class="card-text">Every five experiments it distils what kind of change actually works for this particular skill. Its notes are for the optimizer, not for the skill itself, and every point needs an experiment as evidence.</div>
+          </div>
+          <div class="card animate-in">
+            <div class="card-icon">📖</div>
+            <div class="card-title">The Librarian</div>
+            <div class="card-text">Steps in when the missing piece is a fact rather than an instruction. Looks for the answer in the material you supplied and notes it down with its source and passage. Finding nothing is a valid result, and the question lands in the morning report instead.</div>
           </div>
         </div>
       </section>
@@ -496,6 +501,34 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
       </section>
 
       <section class="screen animate-in">
+        <h2 class="screen-heading">When Rewording Does Not Help</h2>
+        <p>Some failures are not about unclear instructions. If a copy-editing skill does not know a publisher's citation rule, no amount of rewording fixes it: a <strong>fact</strong> is missing.</p>
+        <p>Skill Forge spots those cases and does not invent the answer. The obvious route would also be the riskiest one: a fluently worded invention passes the checks more easily than a clumsy truth. The measurement would reward it rather than catch it.</p>
+        <div class="card-grid stagger-children">
+          <div class="card animate-in">
+            <div class="card-icon">🔍</div>
+            <div class="card-title">Spotting</div>
+            <div class="card-text">Four markers separate fact from form: the failing check asks for a value rather than a shape, the agent asserted something concrete that was wrong, the answers vary between runs, or it searched and came up empty.</div>
+          </div>
+          <div class="card animate-in">
+            <div class="card-icon">📚</div>
+            <div class="card-title">Sourcing</div>
+            <div class="card-text">The librarian searches the material you attached during setup. Every statement needs a registered source and a passage within it, or it is not written down. There is no open web search.</div>
+          </div>
+          <div class="card animate-in" style="border-top-color:var(--color-warning)">
+            <div class="card-icon">☀️</div>
+            <div class="card-title">Asking</div>
+            <div class="card-text">If nothing turns up, the run does not block. The question is written down and the loop carries on. In the morning it is in the report, with the evidence that raised it and the shape of a useful answer. Most take under a minute.</div>
+          </div>
+          <div class="card animate-in">
+            <div class="card-icon">🧮</div>
+            <div class="card-title">Keeping</div>
+            <div class="card-text">The knowledge lives with the skill and travels with it. Sources carry a checksum: if one changes, the statements resting on it are flagged for review rather than quietly updated. What changed in substance is a human call.</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
         <h2 class="screen-heading">When Does the Loop Stop?</h2>
         <div class="card-grid stagger-children">
           <div class="card animate-in" style="border-top-color:var(--color-success)">
@@ -581,6 +614,10 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
           <div class="setting-row animate-in">
             <div class="setting-name">Crash Limit</div>
             <div class="setting-desc">After 3 consecutive errors, the loop stops. Prevents endless loops.</div>
+          </div>
+          <div class="setting-row animate-in">
+            <div class="setting-name">Knowledge Sources</div>
+            <div class="setting-desc">Material the skill has to know: guidelines, standards, glossaries. Attach some during setup and the loop can close knowledge gaps itself instead of asking you in the morning.</div>
           </div>
         </div>
       </section>

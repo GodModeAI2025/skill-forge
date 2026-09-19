@@ -101,11 +101,10 @@ fall into four groups.
   ranks them against four criteria in the same prompt. Still exactly one change
   per experiment; that rule is stricter than SkillOpt's edit budget of four and
   it stays.
-- **Meta memory.** A pattern store records what kind of edit works *for this
-  skill*. Optimizer-facing, never written into the target. Uncapped, with the
-  index in the context and pages read on demand; evidence is appended
-  programmatically from `decision.json`, and a refuted pattern is marked with
-  the experiment that refuted it rather than deleted.
+- **Meta memory.** The optimizer keeps notes on what kind of edit works *for
+  this skill*, separate from the skill itself and never written into it. Every
+  entry needs an experiment id. (It has since grown into a pattern store — see
+  [The optimizer's own memory](#the-optimizers-own-memory).)
 - **Evidence is never truncated.** The context budget applies to history and
   notes, not to the transcripts of the current experiment.
 
@@ -543,6 +542,35 @@ Tracks which categories of improvements have been tried, with saturation detecti
 | **Success protection list** | `success_patterns` stop `prune` from removing the sections that carry the passing evals |
 | **No invented facts** | A missing fact is reported as a question, never filled in from model memory. A plausible-sounding invention passes assertions better than a clumsy truth, so the gate would reward it |
 
+### What val and test cannot see
+
+The last row of that table is the one worth spelling out.
+
+The three-way split protects against memorizing the test cases. It does not
+protect against adapting to the one model and the one setup the run happened
+under — train, val and test come from the same distribution and run under the
+same model.
+
+WikiSkill measures what that can produce: skills a smaller model had evolved
+for itself dropped a stronger model on the same task from 50.5% to **18.1%**.
+The cause was low-level workarounds for the smaller model's weaknesses that
+held the stronger one back. The gate cannot see that damage — it measures
+exactly the combination the workaround was built for.
+
+Two countermeasures, neither touching the gate. The mutator must answer, before
+every new rule: *would this rule still be right for a stronger model or a
+different setup, or does it work around a limitation of the current one?* And
+an optional `transfer_evals` set from a different context is scored twice —
+baseline and final — and reported. **It decides nothing**, for the same reason
+the test split decides nothing: what gets optimized against stops measuring
+anything. val rising while transfer falls is the signature of a workaround, and
+the report says so.
+
+To be clear about the source: WikiSkill gates on a single `Dval`, not across
+targets. Its transfer numbers are analysis, not a gatekeeper. Gating across
+several targets would be its own design decision with its own cost (every round
+measures n times) and is deliberately not built here.
+
 ## Knowledge gaps
 
 Not every failure is a wording failure. If the skill does not know a publisher's
@@ -591,83 +619,6 @@ reaching the agent, which is a `SKILL_DEFECT`.
 non-KEEP. Counting it would end a run over unanswered questions although no
 hypothesis failed; letting it break the streak would make one question every
 three rounds suppress plateau detection entirely.
-
-### The optimizer's own memory
-
-Until v3 this was a file of eight bullets, rewritten from scratch every five
-experiments. The cap kept the context small; the price was that every insight
-fell out after two rounds at the latest, and at the end of a run nothing
-remained for the next one to build on.
-
-WikiSkill's ablation measures that difference: persistent optimizer-side
-knowledge, refined across iterations, is worth **+15.0 points** on average
-across four benchmarks (48.7% → 63.7%) — the single largest effect in their
-paper.
-
-The store is now uncapped. What makes that affordable is one separation:
-
-> Only `patterns/INDEX.md` sits in the context. A page is read individually,
-> with `patterns.py show`, when its title matches the question.
-
-Twenty patterns cost under 1200 tokens permanently. That puts a demand on the
-meta agent: **the title is the most important line of a page**, because it
-decides whether the page is ever opened.
-
-Two rules keep an uncapped store from turning into noise. **Evidence is
-programmatic, interpretation is the agent's** — the orchestrator appends the
-outcome from `decision.json`, since an agent that writes its own support count
-is citing itself. And **mistakes stay readable**: a pattern contradicted by a
-later experiment is marked `widerlegt` with the experiment that did it, not
-deleted, so the same wrong turn is not rediscovered three rounds later.
-
-### Why the skill looks like this
-
-The optimized skill gets a `PURPOSE.md` beside its `SKILL.md`: one entry per
-kept change, with the rejected attempts in the same category that preceded it.
-
-```markdown
-## exp-005 — examples — example_add — 2026-09-19
-
-**Hypothese:** Example for edge case X added
-**Score:** 0.7200 → 0.7900 (+0.0700)
-
-Vorher verworfen in derselben Kategorie:
-- exp-002 instruction_edit NEUTRAL (-0.0050) — rule reworded
-- exp-004 instruction_edit NEUTRAL (+0.0100) — rule tightened
-```
-
-The same information lives in `history.json` and `rejected.jsonl` — but those
-stay in the workspace. Once the skill is handed over, nobody can see why a
-section exists or which more obvious version already failed. Each rejected
-attempt is attributed exactly once, to the next kept change after it. The file
-does not count against `token_budget`: the agent never reads it at runtime.
-
-### What val and test cannot see
-
-The three-way split protects against memorizing the test cases. It does not
-protect against adapting to the one model and the one setup the run happened
-under — train, val and test come from the same distribution and run under the
-same model.
-
-WikiSkill measures what that can produce: skills a smaller model had evolved
-for itself dropped a stronger model on the same task from 50.5% to **18.1%**.
-The cause was low-level workarounds for the smaller model's weaknesses that
-held the stronger one back. The gate cannot see that damage — it measures
-exactly the combination the workaround was built for.
-
-Two countermeasures, neither touching the gate. The mutator must answer, before
-every new rule: *would this rule still be right for a stronger model or a
-different setup, or does it work around a limitation of the current one?* And
-an optional `transfer_evals` set from a different context is scored twice —
-baseline and final — and reported. **It decides nothing**, for the same reason
-the test split decides nothing: what gets optimized against stops measuring
-anything. val rising while transfer falls is the signature of a workaround, and
-the report says so.
-
-To be clear about the source: WikiSkill gates on a single `Dval`, not across
-targets. Its transfer numbers are analysis, not a gatekeeper. Gating across
-several targets would be its own design decision with its own cost (every round
-measures n times) and is deliberately not built here.
 
 ### Two tracks
 
@@ -732,42 +683,6 @@ the subtle case. The exit is still right, because the alternative — a silent
 overwrite — loses sourced knowledge without a trace. To really replace a claim,
 pass `--supersedes C-nnnn`: the old one becomes `veraltet`, not deleted.
 
-### Pruning suggests, it does not delete
-
-`prune-suggest` lists claims never read across `knowledge_stale_experiments`
-(default 20) experiments. The loop deletes nothing in auto mode, and the
-command writes nothing.
-
-The asymmetry: a claim wrongly kept costs a few tokens in a generously sized
-budget. A claim wrongly deleted costs its source, its passage and the work of
-acquiring it — and it is missing precisely when the rare case arrives that it
-was taken in for. That is what a vault is maintained for.
-
-Non-use is also a weak signal. It can mean the claim is superfluous. It can
-equally mean the evals do not cover its topic, or the index does not surface
-it — and deleting fixes neither. The report names all three readings so the
-decision is an informed one.
-
-### Maintenance
-
-`knowledge.py verify` checks structure, provenance and source drift, with three
-levels that are the actual content of the command: **errors** (a claim without a
-registered source, a duplicate id — the vault is untrustworthy), **stale** (the
-source is reachable and changed, so the claims describe a state that no longer
-exists — nothing is updated automatically, because what changed in substance is
-not an arithmetic problem), and **warnings** (a `verweis` source whose path is
-missing on this machine — not verifiable, but not wrong; failing closed here
-would turn every handed-over skill red on arrival).
-
-### Two budgets
-
-`INDEX.md` counts against the strict `token_budget` because it sits in context
-on every run; the pages count against a separate `knowledge_budget` because they
-are read only when the index points at them. With a single budget,
-`artifact-stats` would trip after a handful of claims and force the orchestrator
-into `forced_category: efficiency` — the loop would start pruning away the
-knowledge it had just acquired.
-
 ### What is already in the vault is not a gap
 
 A fact supplied at wizard time never went through the gap queue, so deduping by
@@ -811,6 +726,94 @@ results have to know whether the vault helped.
 Phases 1 and 2 are shipped, plus source drift, supersession and usage tracking
 from phase 4. Still open: searching approved external sources, prune proposals,
 and the upgrade path to a real SkillSafe vault — see `PLAN-wissen-v1.md`.
+
+### Maintenance
+
+`knowledge.py verify` checks structure, provenance and source drift, with three
+levels that are the actual content of the command: **errors** (a claim without a
+registered source, a duplicate id — the vault is untrustworthy), **stale** (the
+source is reachable and changed, so the claims describe a state that no longer
+exists — nothing is updated automatically, because what changed in substance is
+not an arithmetic problem), and **warnings** (a `verweis` source whose path is
+missing on this machine — not verifiable, but not wrong; failing closed here
+would turn every handed-over skill red on arrival).
+
+### Pruning suggests, it does not delete
+
+`prune-suggest` lists claims never read across `knowledge_stale_experiments`
+(default 20) experiments. The loop deletes nothing in auto mode, and the
+command writes nothing.
+
+The asymmetry: a claim wrongly kept costs a few tokens in a generously sized
+budget. A claim wrongly deleted costs its source, its passage and the work of
+acquiring it — and it is missing precisely when the rare case arrives that it
+was taken in for. That is what a vault is maintained for.
+
+Non-use is also a weak signal. It can mean the claim is superfluous. It can
+equally mean the evals do not cover its topic, or the index does not surface
+it — and deleting fixes neither. The report names all three readings so the
+decision is an informed one.
+
+### Two budgets
+
+`INDEX.md` counts against the strict `token_budget` because it sits in context
+on every run; the pages count against a separate `knowledge_budget` because they
+are read only when the index points at them. With a single budget,
+`artifact-stats` would trip after a handful of claims and force the orchestrator
+into `forced_category: efficiency` — the loop would start pruning away the
+knowledge it had just acquired.
+
+## The optimizer's own memory
+
+Until v3 this was a file of eight bullets, rewritten from scratch every five
+experiments. The cap kept the context small; the price was that every insight
+fell out after two rounds at the latest, and at the end of a run nothing
+remained for the next one to build on.
+
+WikiSkill's ablation measures that difference: persistent optimizer-side
+knowledge, refined across iterations, is worth **+15.0 points** on average
+across four benchmarks (48.7% → 63.7%) — the single largest effect in their
+paper.
+
+The store is now uncapped. What makes that affordable is one separation:
+
+> Only `patterns/INDEX.md` sits in the context. A page is read individually,
+> with `patterns.py show`, when its title matches the question.
+
+Twenty patterns cost under 1200 tokens permanently. That puts a demand on the
+meta agent: **the title is the most important line of a page**, because it
+decides whether the page is ever opened.
+
+Two rules keep an uncapped store from turning into noise. **Evidence is
+programmatic, interpretation is the agent's** — the orchestrator appends the
+outcome from `decision.json`, since an agent that writes its own support count
+is citing itself. And **mistakes stay readable**: a pattern contradicted by a
+later experiment is marked `widerlegt` with the experiment that did it, not
+deleted, so the same wrong turn is not rediscovered three rounds later.
+
+## Why the skill looks like this
+
+The optimized skill gets a `PURPOSE.md` beside its `SKILL.md`: one entry per
+kept change, with the rejected attempts in the same category that preceded it.
+The labels are German, like the rest of what the loop writes for itself.
+
+```markdown
+## exp-005 — examples — example_add — 2026-09-19
+
+**Hypothese:** Beispiel für Edge-Case X hinzugefügt
+**Abschnitt:** ## Workflow
+**Score:** 0.7200 → 0.7900 (+0.0700)
+
+Vorher verworfen in derselben Kategorie:
+- exp-002 instruction_edit NEUTRAL (-0.0050) — Regel umformuliert
+- exp-004 instruction_edit NEUTRAL (+0.0100) — Regel verschärft
+```
+
+The same information lives in `history.json` and `rejected.jsonl` — but those
+stay in the workspace. Once the skill is handed over, nobody can see why a
+section exists or which more obvious version already failed. Each rejected
+attempt is attributed exactly once, to the next kept change after it. The file
+does not count against `token_budget`: the agent never reads it at runtime.
 
 ## Crash recovery
 
