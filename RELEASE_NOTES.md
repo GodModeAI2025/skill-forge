@@ -1,6 +1,6 @@
 # Release Notes
 
-## Unreleased: Rauschgrenze gemessen, Metrik markiert, Wissenslücken erkannt
+## Unreleased: Rauschgrenze gemessen, Metrik markiert, Wissen erkannt und aufgenommen
 
 _Versionsnummer vergibt der Owner beim Release; Stand 2026-09-19._
 
@@ -77,7 +77,73 @@ Das ist Phase 1 aus `PLAN-wissen-v1.md`: erkennen und fragen, ohne jeden
 Schreibzugriff auf einen Wissensbestand. Wissen entgegennehmen, evidenzgebunden
 ablegen und pflegen sind Phase 2 bis 4 und sind nicht implementiert.
 
-32 neue Tests. Die Suite steht damit bei 316.
+32 neue Tests.
+
+**Wissen aufnehmen statt nur danach fragen.** Der Loop kann eine gemeldete
+Wissenslücke jetzt aus bereitgestelltem Material schliessen. Neu sind ein
+Wizard-Schritt für Wissensquellen, ein Wissensbestand beim Ziel-Skill, der
+Librarian-Agent und fünf Gates vor jedem Claim.
+
+Der Bestand liegt beim Ziel-Skill, nicht im Workspace: Wissen, das der Skill
+braucht, gehört zum Skill und wird mit ihm weitergegeben. Format und
+ID-Präfixe sind eine Teilmenge des SkillSafe-Wissenstresors (`C-nnnn` Claim,
+`S-nnnn` Quelle) und bleiben formatkompatibel — übernommen ist das Konzept,
+nicht der Code, und SkillSafe ist keine Abhängigkeit.
+
+**Die zentrale Entscheidung ist eine Trennung.** Ob eine Formulierung besser
+ist, entscheidet die Messung; ob eine Tatsache stimmt, entscheidet die Quelle.
+Ein Eval-Score ist kein Wahrheitskriterium. Der *Verweis* aus der SKILL.md auf
+den Bestand ist deshalb eine gewöhnliche, gate-pflichtige Mutation, der *Inhalt*
+des Bestands nicht: dort prüfen Provenienz, Leak, Injection, Secrets und eine
+Near-Duplicate-Sperre. Alle fünf laufen in Python und nicht als Punkt auf einer
+Prompt-Checkliste — einen Agenten, der eine Regel nicht befolgt hat, per Prompt
+prüfen zu lassen, ob er sie befolgt hat, ist zirkulär.
+
+Der wichtigste der fünf ist der Leak-Check. Ohne ihn wäre die naheliegendste
+Optimierung, die erwarteten Eval-Antworten als „Wissen" einzutragen: der
+val-Score stiege, nichts generalisierte, und der Overfitting-Schutz wäre
+unterlaufen. Geprüft wird über Achtwortfenster gegen val **und** test — ein
+Claim, der eine Testantwort enthält, ist auch dann Leakage, wenn er zufällig
+aus einem Dokument stammt.
+
+Die Near-Duplicate-Sperre heisst bewusst nicht Widerspruchserkennung. Sie fängt
+„gleiche Entität, andere Zahl" und nicht den subtilen Fall. Der Ausweg ist
+trotzdem richtig, denn die Alternative — stilles Überschreiben — verlöre
+belegtes Wissen ohne Spur. Wer ersetzen will, setzt `--supersedes`: der alte
+Claim wird `veraltet`, nicht gelöscht.
+
+**Zwei Budgets statt einem.** `INDEX.md` zählt gegen das strenge
+`token_budget`, weil es bei jedem Lauf im Kontext liegt; die Seiten zählen
+gegen ein eigenes `knowledge_budget`, weil sie nur gelesen werden, wenn der
+Index auf sie zeigt. Mit einem einzigen Budget schlüge `artifact-stats` nach
+wenigen Claims an und zwänge den Orchestrator in `forced_category: efficiency`
+— der Loop finge also an, das gerade erworbene Wissen wieder wegzukürzen.
+
+**Pflege ist eingebaut, Automatik nicht.** `verify` rechnet die Quellen-Hashes
+nach und unterscheidet drei Stufen: `errors` (Claim ohne registrierte Quelle,
+doppelte ID — der Bestand ist nicht vertrauenswürdig), `stale` (die Quelle hat
+sich geändert, die Claims beschreiben einen Stand, den es nicht mehr gibt) und
+`warnings` (eine `verweis`-Quelle, deren Pfad auf dieser Maschine fehlt: nicht
+nachprüfbar, aber nicht falsch — fail-closed machte hier jeden weitergegebenen
+Skill sofort rot). Aktualisiert wird nichts automatisch: was sich inhaltlich
+geändert hat, ist keine Rechenaufgabe.
+
+Der Librarian ist ein eigener Agent und keine Erweiterung des Mutators. Der
+Mutator wird dafür belohnt, etwas zu schreiben; der Librarian muss bereit sein,
+nichts zu liefern. Diese beiden Anreize gehören nicht in denselben Prompt.
+Findet er in den bereitgestellten Quellen nichts, ist `resolved: false` das
+richtige Ergebnis, und die Frage bleibt offen. Eine offene Websuche gibt es
+nicht, in keinem Modus.
+
+**Korrektur am eigenen Plan.** `PLAN-wissen-v1.md` sah die
+`FORGE_KNOWLEDGE`-Region zugleich als byteweise geschützt und als
+gate-pflichtig vor. Beides zusammen geht nicht: was geschützt ist, kann der
+Mutator nicht ändern, und was er nicht ändern kann, kann das Gate nicht
+bewerten — die erste Formulierung des Verweises wäre für immer eingefroren. Die
+Region steht deshalb nicht in `PROTECTED_REGIONS`; dass es den Verweis
+überhaupt gibt, prüft ein Lint in `verify`.
+
+37 neue Tests. Die Suite steht damit bei 353.
 
 ## v3.4 (2026-07-29): Härtung nach der adversarialen Review
 

@@ -42,9 +42,16 @@ Orchestrator
     │     Output: hypothesis.json (validiert gegen Output Schema)
     │
     ├─▶ [Wissensweiche] hypothesis.json enthält knowledge_request?
-    │     ja   → knowledge.py gap-append, Decision DEFERRED, kein Mutator,
-    │            kein Snapshot, kein Eval-Run, nächste Hypothese
+    │     ja   → gap-append, dann Librarian Agent
+    │              resolved   → claim-add (fünf Gates), gap-resolve sourced
+    │              unresolved → Frage bleibt offen
+    │            beide Wege: Decision DEFERRED, kein Mutator, kein Snapshot,
+    │            kein Eval-Run, nächste Hypothese
     │     nein → weiter zum Mutator
+    │
+    ├─▶ Librarian Agent (nur bei Wissenslücke)
+    │     Input:  gap + knowledge_inbox + Quellenregister + vorhandene Claims
+    │     Output: librarian.json — belegte Claims, oder resolved: false
     │
     ├─▶ Mutator Agent
     │     Input:  hypothesis.json + target_path + snapshot_dir + context
@@ -112,6 +119,15 @@ ohne Wirkung.
   alle vier Felder `question`, `why_needed`, `answer_shape`, `eval_ids` sind
   gefüllt. Die eigentliche Prüfung macht `knowledge.py gap-append`; sie bricht
   mit Exit 1 ab, statt eine unbrauchbare Frage aufzunehmen
+
+**Librarian-Output:**
+- `resolved` ist ein Boolean
+- bei `resolved: true`: `claims` ist nicht leer, `page` ist ein Slug, und jeder
+  Claim hat `source`, `fundstelle` und `text`
+- bei `resolved: false`: `claims` ist leer und `unresolved_reason` ist gefüllt
+- Die inhaltliche Prüfung macht `claim-add`, nicht diese Liste. Ein Claim ohne
+  registrierte Quelle, mit einer Eval-Antwort, mit einem Token oder mit einer
+  Anweisung an das System wird dort abgewiesen, egal wie sauber das JSON ist
 
 **Mutator-Output:**
 - `files_changed` ist eine nicht leere Liste
@@ -183,10 +199,42 @@ python3 scripts/knowledge.py gap-append <workspace>/knowledge-gaps.jsonl \
    vorhandene Wissen den Agenten nicht — dann ist das ein `SKILL_DEFECT` und
    gehört als normale Mutation behandelt, nicht als Wissenslücke.
 
-3. Kein Snapshot, kein Mutator, kein Eval-Run, kein Scoring. Es gibt nichts zu
+3. **Librarian aufrufen** (`agents/librarian.md`), sofern
+   `knowledge_enabled` und der Bestand oder die Inbox überhaupt Material
+   enthalten. Input ist das Gap, `knowledge_inbox`, das Quellenregister und die
+   vorhandenen Claims. Zwei Ausgänge:
+
+   **`resolved: true`** — schreibe die Claims in den Bestand:
+
+```bash
+python3 scripts/knowledge.py claim-add <ziel-SKILL.md> \
+  --page <slug aus librarian.json> \
+  --from-json <workspace>/experiments/exp-<NNN>/librarian.json \
+  --evals <workspace>/evals.json --domain <domain>
+```
+
+   `--evals` ist nicht optional, solange eine evals.json existiert: ohne sie
+   entfällt der Leak-Check, und dann kann der Loop die erwarteten
+   Eval-Antworten als Wissen eintragen.
+
+   Exit 0 heisst: mindestens ein Claim ist im Bestand. Dann
+   `gap-resolve --status sourced --resolved-by <S-nnnn>`, danach
+   `knowledge.py verify`, und das Experiment endet trotzdem als `DEFERRED`:
+   gemessen wurde nichts. Der *Verweis* auf den Bestand ist eine eigene,
+   gate-pflichtige Mutation und gehört in die nächste Runde (`knowledge_link`).
+
+   Exit 2 heisst: kein Claim kam durch die Gates. Das Feld `rejected` sagt, an
+   welchem. Die Frage bleibt offen, und der Grund gehört in `decision.json` —
+   ein Gate, das stillschweigend zuschlägt, sieht aus wie ein Librarian, der
+   nichts gefunden hat.
+
+   **`resolved: false`** — weiter mit Punkt 4. Das ist kein Fehler: dass der
+   Librarian leer ausgehen darf, ist der Grund, warum er ein eigener Agent ist.
+
+4. Kein Snapshot, kein Mutator, kein Eval-Run, kein Scoring. Es gibt nichts zu
    sichern und nichts zu messen.
 
-4. Entscheidung `DEFERRED` in `decision.json`, mit `gap_id` und der Frage im
+5. Entscheidung `DEFERRED` in `decision.json`, mit `gap_id` und der Frage im
    Wortlaut, und in beide Logs:
 
 ```bash
@@ -203,9 +251,11 @@ python3 scripts/composite_score.py coverage-update <workspace>/coverage-matrix.j
    ein Delta ungleich null wäre eine erfundene Zahl. `DEFERRED` zählt nicht in
    die Sättigung, nicht in `best_delta` und nicht ins Plateau-Fenster.
 
-5. Deferred-Zähler erhöhen und gegen `max_deferred_per_run` prüfen.
+6. Deferred-Zähler erhöhen und gegen `max_deferred_per_run` prüfen. Ein Gap,
+   das der Librarian geschlossen hat, zählt **nicht** mit: der Deckel begrenzt
+   unbeantwortete Fragen, nicht erfolgreiche Beschaffungen.
 
-6. Weiter mit der nächsten Hypothese. Der Lauf endet deswegen nicht.
+7. Weiter mit der nächsten Hypothese. Der Lauf endet deswegen nicht.
 
 ### 5. Checkpoint-Management
 

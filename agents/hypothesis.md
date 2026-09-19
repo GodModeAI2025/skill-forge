@@ -256,6 +256,12 @@ brauchbar; "Infos zum Zitierstil" ist es nicht.
   darauf. Das ist ein `SKILL_DEFECT`, und die Mutation richtet sich auf die
   Stelle, an der der Agent auf den Bestand gestossen werden müsste.
 
+Was danach passiert, ist nicht deine Sache: der Orchestrator ruft den Librarian
+(`agents/librarian.md`), der die Antwort im bereitgestellten Material sucht.
+Findet er sie, landet sie als belegter Claim im Bestand, und die nächste Runde
+formuliert den Verweis darauf als normale Mutation. Findet er sie nicht, bleibt
+die Frage bis zum Morning Report offen.
+
 **Du erfindest die Antwort nicht.** Auch nicht als markierte Zwischenlösung,
 auch nicht "hilfsweise". Eine plausibel klingende erfundene Tatsache besteht
 Assertions und einen LLM-Judge oft besser als eine sperrige richtige; das Gate

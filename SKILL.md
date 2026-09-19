@@ -246,6 +246,54 @@ Speichere:
 }
 ```
 
+### Wizard-Schritt 3.5: Wissensquellen (nur Skill-Modus)
+
+Frage: **"Gibt es Material, das dieser Skill kennen muss?"**
+
+Gemeint sind Fakten, die der Agent nicht herleiten kann: interne Richtlinien,
+Normen, Schnittstellenbeschreibungen, Glossare, Verlagsleitfäden. Nicht gemeint
+sind Beispiele für gutes Verhalten — die gehören in die SKILL.md, nicht in
+einen Wissensbestand.
+
+Drei Antworten sind erlaubt:
+
+- **Ja, hier ist es.** Dateien nach `<workspace>/knowledge-inbox/` legen und
+  registrieren (siehe unten). Der Loop kann sie dann im Auto-Modus verwerten.
+- **Weiss ich noch nicht.** Der Loop meldet Wissenslücken, sobald er welche
+  findet, und fragt im Report.
+- **Nein, der Skill braucht keins.** Dann bleibt der Wissenszweig aus
+  (`knowledge_enabled: false`), und `KNOWLEDGE_GAP` wird nicht klassifiziert.
+
+Jede Datei kommt einzeln ins Register, mit Trust-Stufe und Rechten:
+
+```bash
+python3 scripts/knowledge.py source-add <ziel-SKILL.md> <datei> \
+  --title "Leitfaden Verlag X" --trust T1 --rights volltext
+```
+
+`--trust`: **T1** amtliches oder normatives Primärdokument (die Norm selbst),
+**T2** Hersteller- oder Sekundärquelle (ein Bericht ÜBER etwas), **T3** Web oder
+unbestätigt. Steht dieselbe Aussage in T1 und T3, wird sie mit T1 belegt.
+
+`--rights`: `volltext` kopiert die Datei in den Bestand, damit die Provenienz
+auch nach der Weitergabe des Skills nachprüfbar bleibt. `verweis` speichert nur
+Pfad und Hash — für Material, das nicht weitergegeben werden darf.
+
+**Der Wizard weist auf die Messbarkeitsfalle hin.** Wissen ist nur messbar,
+wenn das Eval-Set Fälle enthält, die ohne dieses Wissen nicht zu lösen sind. Ein
+Set aus reinen Formatierungs-Evals wird durch keinen Claim besser; der Loop
+misst NEUTRAL und zöge die falsche Lehre. Gibt der User Wissensquellen an,
+verlangt der Wizard mindestens zwei wissenssensitive Evals.
+
+Speichere:
+```json
+{
+  "knowledge_enabled": true,
+  "knowledge_inbox": "<workspace>/knowledge-inbox",
+  "knowledge_budget": 8000
+}
+```
+
 ### Wizard-Schritt 4: Richtung festlegen
 
 Frage: **"Ist ein höherer oder niedrigerer Wert besser?"**
@@ -357,6 +405,7 @@ Nach Bestätigung:
 ├── history.archive.jsonl   # Volldatensätze der komprimierten Experimente
 ├── rejected.jsonl          # Nicht-KEEP im Wortlaut, kompaktierungsfest
 ├── knowledge-gaps.jsonl    # Erkannte Wissenslücken als Fragen, append-only
+├── knowledge-inbox/        # Vom User bereitgestelltes Rohmaterial
 ├── editing-notes.md        # Meta-Memory des Optimierers, alle 5 Experimente
 ├── checkpoint.json         # Resume-Point für Session-Übergreifendes Fortsetzen
 ├── experiment-log.tsv      # Flaches Log für schnelles Monitoring
@@ -558,6 +607,20 @@ Im Guided-Modus: Zeige dem User die Hypothese und frage:
 - "Soll ich diese Hypothese testen?"
 - Optionen: **Ja** / **Anpassen** (User gibt Richtung vor) / **Andere Idee** (User beschreibt eigene Hypothese) / **Überspringen** (nächste Kategorie)
 - Falls der User eine eigene Hypothese formuliert, verwende diese statt der generierten.
+
+**🔀 Guided-Checkpoint 2.5: Wissenslücke**
+
+Meldet der Hypothesis-Agent einen `knowledge_request` und findet der Librarian
+in den bereitgestellten Quellen nichts, zeigt der Guided-Modus die Frage sofort:
+
+- "Mir fehlt eine Tatsache: *[question]*. Woran ich es merke: *[why_needed]*.
+  Brauchbar wäre: *[answer_shape]*."
+- Optionen: **Antworten** (Freitext, wird als Quelle registriert) / **Datei
+  nachreichen** (`source-add`) / **Verwerfen** (Frage nie wieder stellen) /
+  **Später** (bleibt offen, Report)
+
+Im Auto-Modus entfällt der Checkpoint: die Frage bleibt offen, das Experiment
+endet mit `DEFERRED`, und der Morning Report führt sie auf.
 
 ### Schritt 2: Mutation anwenden
 
@@ -1074,7 +1137,7 @@ bearbeitet wurden — und lenkt den Hypothesis-Agent aktiv in unterversorgte Geb
 | `efficiency` | Token-Verbrauch, Laufzeit, Redundanz | Prosa gestrafft, Script optimiert |
 | `scripts` | Helper-Scripts, Validierung, Automatisierung | Script hinzugefügt/gefixt |
 | `structure` | Skill-Aufbau, Abschnittsreihenfolge | Abschnitte umorganisiert |
-| `knowledge` | Fehlende Fakten statt fehlender Klarheit | Wissenslücke gemeldet (`DEFERRED`) |
+| `knowledge` | Fehlende Fakten statt fehlender Klarheit | Wissenslücke gemeldet (`DEFERRED`), Verweis auf den Bestand gesetzt (`knowledge_link`) |
 
 ### Generic-Modus Kategorien
 
@@ -1184,6 +1247,9 @@ Standardwerte, die der User überschreiben kann:
 | `max_knowledge_gaps_per_experiment` | 1 | Wie viele Wissenslücken eine Runde melden darf |
 | `max_deferred_per_run` | 3 | Wie oft ein Lauf eine Frage statt einer Mutation liefert, bevor `knowledge` deprioritisiert wird |
 | `gap_limit` | 10 | Wie viele offene Fragen in den Agent-Prompt gehen |
+| `knowledge_enabled` | true | Wissenszweig aktiv. Auf `false` wird `KNOWLEDGE_GAP` nicht klassifiziert |
+| `knowledge_inbox` | `<workspace>/knowledge-inbox` | Vom User bereitgestelltes Rohmaterial |
+| `knowledge_budget` | `4 × token_budget` | Deckel für `knowledge/pages/`, getrennt vom strengen Budget |
 | `token_budget` | (berechnet) | `max(2000, ceil(initial * 1.25))`, vom Wizard gesetzt |
 | `chars_per_token` | 3 | Divisor der Token-Schätzung, 3 für deutsche Texte |
 | `protected_paths` | [] | Pfade, die der Loop nie ändert (Generic-Modus, Pflicht) |
@@ -1231,11 +1297,35 @@ Zitierregel eines bestimmten Verlags nicht, kennt ein Code-Skill die tatsächlic
 Signatur einer internen API nicht, dann hilft keine Umformulierung: es fehlt
 eine **Tatsache**, kein Verhalten.
 
-Der Loop erkennt solche Fälle und **erfindet die Antwort nicht**. Er meldet sie
-als Frage. Das ist der ganze Umfang der aktuellen Ausbaustufe: erkennen und
-fragen. Wissen aufnehmen, ablegen und pflegen beschreibt `PLAN-wissen-v1.md`
-als Phase 2 bis 4; nichts davon ist implementiert, und der Loop schreibt
-deshalb keinen Wissensbestand und legt im Ziel-Skill nichts an.
+Der Loop erkennt solche Fälle und **erfindet die Antwort nicht**. Er sucht sie
+in bereitgestelltem Material, und findet er sie dort nicht, meldet er sie als
+Frage.
+
+### Die zentrale Trennung: zwei Spuren
+
+Wissen passt nicht in das Gate, auf dem der Rest des Loops beruht, und zwar aus
+einem grundsätzlichen Grund:
+
+> Ob eine Formulierung besser ist, entscheidet die Messung. Ob eine Tatsache
+> stimmt, entscheidet die Quelle. Ein Eval-Score ist kein Wahrheitskriterium.
+
+Ein sauber belegter Satz, der im aktuellen Eval-Set zufällig nichts bewegt, ist
+trotzdem richtig und gehört in den Bestand. Ein erfundener Satz, der den Score
+hebt, gehört es nicht. Deshalb wird getrennt:
+
+| | Spur A — Inhalt | Spur B — Verweis |
+|---|---|---|
+| **Was** | Die Claims im Bestand | Die Regel in der SKILL.md, die auf den Bestand zeigt |
+| **Torwächter** | Provenienz, Leak, Injection, Secrets, Near-Duplicate | Das normale Gate: `decide`, KEEP/REVERT auf val |
+| **Entscheidet** | `knowledge.py`, im Zweifel der Mensch | Der Composite Score |
+
+Spur B ist eine gewöhnliche Mutation und braucht keine Sonderbehandlung. Sie
+beantwortet die messbare Frage: *Nützt es, den Agenten auf den Bestand zu
+stossen?* Spur A beantwortet die nicht-messbare: *Stimmt das, was dort steht?*
+
+Das ist kein Schlupfloch am Gate vorbei, sondern dieselbe Logik wie beim
+`FORGE_APPENDIX`: gate-umgehender Inhalt ist erlaubt, wenn er evidenzgebunden,
+gedeckelt, kurz und nicht in der Lage ist, bestehende Regeln umzuschreiben.
 
 **Warum nicht einfach die Referenzdatei schreiben lassen.** Der Mutationstyp
 `reference_add` existiert seit v2, und der Mutator würde die Datei aus dem
@@ -1262,10 +1352,26 @@ python3 scripts/knowledge.py gap-append <workspace>/knowledge-gaps.jsonl \
    ist die Entscheidung `SKIP`, nicht `DEFERRED`: es liegt keine brauchbare
    Frage vor.
 
-3. Kein Snapshot, kein Mutator, kein Eval-Run, kein Scoring. Entscheidung
-   `DEFERRED`, Kategorie `knowledge`, weiter zur nächsten Hypothese. Der Lauf
-   endet deswegen nicht.
-4. Der Morning Report führt die offenen Fragen in einem eigenen Abschnitt auf.
+3. Der Librarian (`agents/librarian.md`) sucht die Antwort im bereitgestellten
+   Material: `knowledge-inbox/` und alles, was in `knowledge/SOURCES.md` steht.
+   Eine offene Websuche gibt es nicht, in keinem Modus.
+4. **Findet er sie**, schreibt der Loop die Claims in den Bestand:
+
+```bash
+python3 scripts/knowledge.py claim-add <ziel-SKILL.md> \
+  --page <slug> --from-json <exp-dir>/librarian.json \
+  --evals <workspace>/evals.json
+```
+
+   Danach `gap-resolve ... --status sourced`, und die nächste Runde formuliert
+   den Verweis in der SKILL.md als normale, gate-pflichtige Mutation (Spur B).
+   Exit 2 heisst: kein einziger Claim kam durch die Gates — dann bleibt die
+   Frage offen, und `rejected` sagt woran es lag.
+
+5. **Findet er sie nicht** (`resolved: false`): kein Snapshot, kein Mutator,
+   kein Eval-Run, kein Scoring. Entscheidung `DEFERRED`, Kategorie `knowledge`,
+   weiter zur nächsten Hypothese. Der Lauf endet deswegen nicht.
+6. Der Morning Report führt die offenen Fragen in einem eigenen Abschnitt auf.
 
 ### Warum der Auto-Modus dabei nicht blockiert
 
@@ -1302,6 +1408,131 @@ statt bis zum Report zu warten.
   sondern der Verweis darauf. Das ist ein `SKILL_DEFECT` und wird als normale
   Mutation behandelt.
 
+### Der Bestand
+
+Der Bestand liegt beim **Ziel-Skill**, nicht im Workspace: Wissen, das der Skill
+braucht, gehört zum Skill und wird mit ihm weitergegeben. Läge er im Workspace,
+bliebe er beim Optimierer, und der weitergegebene Skill wüsste wieder nichts.
+
+```
+<ziel-skill>/
+├── SKILL.md              ← + FORGE_KNOWLEDGE-Region (Verweis, ~4 Zeilen)
+└── knowledge/
+    ├── INDEX.md          ← Navigationsmap. Klein, permanent im Kontext
+    ├── SOURCES.md        ← Register: ID, Titel, Stand, SHA-256, Trust, Rechte
+    ├── sources/          ← Kopien der Quellen mit Volltextrechten
+    └── pages/<slug>.md   ← Claims. Werden nur bei Bedarf gelesen
+```
+
+Format und ID-Präfixe sind eine Teilmenge des SkillSafe-Wissenstresors
+(`C-nnnn` Claim, `S-nnnn` Quelle) und bleiben formatkompatibel: ein hier
+erzeugter Bestand lässt sich später ohne Umschreiben in einen echten Tresor
+einlesen. Übernommen ist das Konzept, nicht der Code — SkillSafe ist keine
+Abhängigkeit.
+
+Eine Seite sieht so aus:
+
+```markdown
+---
+type: wissen
+title: Belegregeln Verlag X
+domain: lektorat
+status: aktiv
+stichworte: [beleg, zitat, kurzbeleg]
+sources: [S-0001]
+stand: 2026-09-19
+veraltet: [C-0007]
+---
+
+## Claims
+- **C-0012** [S-0001 | "Abschnitt 4.2 Belege"] Im Fliesstext steht der
+  Kurzbeleg mit Autor, Jahr und Seite.
+```
+
+### Die fünf Gates vor jedem Claim
+
+Alle in `scripts/knowledge.py`, keines als Punkt auf einer Prompt-Checkliste —
+aus demselben Grund, aus dem `verify-regions` in Python läuft: einen Agenten,
+der eine Regel nicht befolgt hat, per Prompt prüfen zu lassen, ob er sie
+befolgt hat, ist zirkulär.
+
+| Gate | Prüft | Warum |
+|---|---|---|
+| **Provenienz** | Registrierte Quelle **und** Fundstelle | Eine Quelle ohne Fundstelle ist bei 300 Seiten keine Belegstelle, sondern eine Behauptung |
+| **Leak** | Achtwortfenster gegen val- und test-Evals | Sonst trägt der Loop die erwarteten Antworten als „Wissen" ein, der val-Score steigt, und nichts generalisiert |
+| **Injection** | Imperative an das System im Claim-Text | Quellen sind Daten, nie Anweisung |
+| **Secrets** | Zugangsdaten als **Wert**, nicht als Wort | Der Bestand wird weitergegeben. Das Wort „Passwort" ist erlaubt, ein Token nicht |
+| **Near-Duplicate** | Fast gleiche Aussage mit anderem Inhalt | Verhindert stilles Überschreiben belegten Wissens |
+
+Zum letzten Gate gehört eine Ehrlichkeit: es ist **keine** semantische
+Widerspruchsprüfung und könnte es auch nicht leisten. Es fängt den häufigen
+Fall „gleiche Entität, andere Zahl" und nicht den subtilen. Der Ausweg ist
+trotzdem richtig, denn die Alternative — stilles Überschreiben — verlöre
+belegtes Wissen ohne Spur. Wer wirklich ersetzen will, setzt `--supersedes
+C-nnnn`: der alte Claim wird `veraltet`, nicht gelöscht.
+
+### Der Verweis in der SKILL.md
+
+```markdown
+<!-- FORGE_KNOWLEDGE_START -->
+Wissensbestand: knowledge/INDEX.md
+Für die dort geführten Themen ist der Bestand die alleinige Faktenquelle.
+Nicht im Bestand → sag das, ergänze nicht aus eigenem Wissen.
+<!-- FORGE_KNOWLEDGE_END -->
+```
+
+Die Regel ist bewusst auf die **im Index geführten Themen** begrenzt. Eine
+globale geschlossene Welt („Fakten nur aus dem Bestand") ist für einen
+Wissenstresor richtig und für einen beliebigen Skill falsch — ein
+Lektorats-Skill muss weiterhin allgemeine Sprachkompetenz einsetzen dürfen.
+
+**Diese Region ist nicht geschützt**, anders als `FORGE_KEEP` und
+`FORGE_APPENDIX`. Ihr Inhalt ist Spur B und damit gate-pflichtig: wäre er
+byteweise festgenagelt, könnte der Mutator ihn nicht ändern und das Gate ihn
+nicht bewerten, und die erste Formulierung des Verweises wäre für immer
+eingefroren. Ob es den Verweis überhaupt gibt, prüft stattdessen ein Lint:
+`knowledge.py verify` warnt, wenn Claims im Bestand liegen, die SKILL.md aber
+keine solche Region hat — der Agent fände ihn sonst nie.
+
+### Zwei Budgets
+
+| Budget | Umfasst | Bei Überschreitung |
+|---|---|---|
+| `token_budget` | SKILL.md, `references/`, `scripts/`, `knowledge/INDEX.md` | `forced_category: efficiency`, `prune` |
+| `knowledge_budget` | `knowledge/pages/` | Prune-Vorschlag im Report, **kein** Automatismus |
+
+Die Trennung folgt der Ladelogik: `INDEX.md` liegt bei jedem Lauf im Kontext und
+ist echter Dauerverbrauch; die Seiten werden nur gelesen, wenn der Index auf sie
+zeigt. Mit einem einzigen Budget schlüge `artifact-stats` nach wenigen Claims an
+und zwänge den Orchestrator in `forced_category: efficiency` — der Loop finge
+also an, das gerade erworbene Wissen wieder wegzukürzen.
+
+```bash
+python3 scripts/knowledge.py stats <ziel-SKILL.md> --budget <knowledge_budget>
+```
+
+### Pflege
+
+```bash
+python3 scripts/knowledge.py verify <ziel-SKILL.md>
+```
+
+Prüft Struktur, Provenienz und Quellendrift, mit drei Abstufungen:
+
+- **errors** — der Bestand ist nicht vertrauenswürdig: Claim ohne registrierte
+  Quelle, doppelte ID, fehlende Fundstelle. Exit 1.
+- **stale** — die Quelle ist erreichbar und hat sich geändert. Die Claims
+  beschreiben einen Stand, den es nicht mehr gibt. Exit 1. Automatisch
+  aktualisiert wird **nichts**: was sich inhaltlich geändert hat, ist keine
+  Rechenaufgabe.
+- **warnings** — etwas ist nicht nachprüfbar, aber nicht falsch: eine
+  `verweis`-Quelle, deren Pfad auf dieser Maschine fehlt. Der Claim wurde bei
+  der Aufnahme gegen sie geprüft; dass der Rechner ein anderer ist, macht ihn
+  nicht ungültig. Fail-closed an dieser Stelle machte jeden weitergegebenen
+  Skill sofort rot.
+
+`verify` gehört in den Lauf nach jedem `claim-add` und vor jeden Report.
+
 ### Fragen beantworten
 
 ```bash
@@ -1323,9 +1554,16 @@ demselben Grund neben der History wie `rejected.jsonl`: die
 History-Kompaktierung würde eine offene Frage sonst nach fünf Experimenten
 wegkürzen.
 
-Bis Phase 2 verwertet der Loop die Antwort nicht automatisch. Was der Mensch
-aus ihr macht — eine Regel in `FORGE_KEEP`, eine Referenzdatei, ein Eval —,
-entscheidet er selbst.
+Eine Antwort per `--note` ist noch kein Claim: sie hat keine Quelle. Soll sie
+in den Bestand, registriert der User sie als Quelle (`source-add` auf eine
+Datei mit der Antwort) — dann hat sie eine, nämlich ihn selbst, mit Trust-Stufe
+und Datum. Das ist kein Formalismus: in einem Jahr ist „hat mal jemand gesagt"
+nicht von „steht in der Norm" zu unterscheiden, wenn es nicht dabeisteht.
+
+Noch nicht implementiert (`PLAN-wissen-v1.md`, Phase 3 bis 5): Suche in
+freigegebenen externen Quellen, Nutzungsverfolgung aus Transcripts,
+Prune-Vorschläge für nie gelesene Claims, Aufstieg zu einem echten
+SkillSafe-Wissenstresor.
 
 ---
 
@@ -1389,15 +1627,23 @@ Gegenmaßnahmen:
    Aggregat gegen Verbesserungen aufzurechnen.
 7. **Crash-Erkennung**: 3 aufeinanderfolgende Crashes stoppen den Loop statt endlos
    zu wiederholen
+8. **Leak-Check auf dem Wissensbestand**: Ein Claim, dessen Achtwortfenster
+   wörtlich in einem val- oder test-Eval vorkommt, wird abgewiesen. Geprüft
+   wird über beide Splits, nicht nur val: ein Claim, der eine Testantwort
+   enthält, ist auch dann Leakage, wenn er zufällig aus einem Dokument stammt.
+9. **Kein erfundenes Wissen**: Kein Claim ohne registrierte Quelle und
+   Fundstelle. Eine plausibel klingende Erfindung besteht Assertions besser als
+   eine sperrige Wahrheit — das Gate belohnte sie, statt sie zu fangen.
 
 ---
 
 ## Abhängigkeiten
 
-**Standalone-Betrieb (Standard):** Skill Forge funktioniert eigenständig. Die fünf
+**Standalone-Betrieb (Standard):** Skill Forge funktioniert eigenständig. Die sechs
 mitgelieferten Agents (`orchestrator.md`, `hypothesis.md`, `mutator.md`, `scorer.md`,
-`meta.md`)
-decken den gesamten Loop ab. Der Orchestrator koordiniert den Agent-Lifecycle, die
+`meta.md`, `librarian.md`)
+decken den gesamten Loop ab. Der Librarian läuft nur, wenn eine Wissenslücke
+gemeldet wurde. Der Orchestrator koordiniert den Agent-Lifecycle, die
 Context Assembly und die Checkpoints. Im Skill-Modus übernimmt der Scorer-Agent auch
 das Grading der Assertions. Im Generic-Modus wird kein Agent zum Bewerten benötigt, der
 Metrik-Command liefert die Zahl direkt.
@@ -1417,6 +1663,8 @@ Diese sind optional und nicht erforderlich für den normalen Betrieb.
 ```bash
 python3 -m pytest tests/ -q
 python3 scripts/composite_score.py --version
+python3 scripts/knowledge.py --version
+python3 scripts/knowledge.py verify <ziel-SKILL.md>   # wenn ein Bestand existiert
 ```
 
 Die Tests pinnen die Entscheidungslogik, Snapshot und Revert, die Coverage-Matrix und die
@@ -1436,7 +1684,8 @@ vorher aus.
 | `agents/scorer.md` | LLM-as-Judge Bewertung (nur Skill-Modus) |
 | `PLAN-wissen-v1.md` | Plan für Wissenserkennung, -beschaffung und -pflege; Phase 1 ist umgesetzt |
 | `scripts/composite_score.py` | Scoring, Entscheidung (`decide`), Snapshot/Revert, TSV-Logging, History-Compaction, Checkpoint, Grouping |
-| `scripts/knowledge.py` | Wissenslücken-Queue: melden, deduplizieren, auflösen, rendern |
+| `scripts/knowledge.py` | Wissenslücken-Queue und Wissensbestand: melden, deduplizieren, auflösen, Quellen registrieren, Claims mit fünf Gates schreiben, prüfen, indizieren |
+| `agents/librarian.md` | Beschaffung aus bereitgestelltem Material; darf leer ausgehen |
 | `tests/` | Testsuite für Entscheidung, Scoring, Coverage, Snapshot/Revert, History |
 | `conftest.py` | pytest-Konfiguration im Repo-Root (macht `scripts/` importierbar) |
 | `templates/morning_report.md` | Report-Template mit Coverage-Sektion |

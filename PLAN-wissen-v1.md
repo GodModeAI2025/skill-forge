@@ -4,11 +4,24 @@ Stand: 2026-09-19. Betrifft ausschließlich `skill-forge`. SkillSafe wird als
 Konzept übernommen, nicht als Abhängigkeit und nicht durch eine Änderung an
 jenem Repository.
 
-**Umsetzungsstand:** Phase 1 (erkennen und fragen) ist implementiert — dritte
-Fehlerklasse `KNOWLEDGE_GAP`, `knowledge-gaps.jsonl`, `scripts/knowledge.py`,
-die Entscheidung `DEFERRED`, der Report-Abschnitt und 32 Tests. Phase 2 bis 5
-sind offen; die vier Fragen in Abschnitt 13 sind unbeantwortet und blockieren
-Phase 2.
+**Umsetzungsstand:** Phase 1 und Phase 2 sind implementiert.
+
+* **Phase 1 — erkennen und fragen:** dritte Fehlerklasse `KNOWLEDGE_GAP`,
+  `knowledge-gaps.jsonl`, die Entscheidung `DEFERRED`, Report-Abschnitt.
+* **Phase 2 — Wissen entgegennehmen:** Wissensbestand beim Ziel-Skill,
+  Quellenregister mit SHA-256, `claim-add` mit fünf Gates, `verify`, `index`,
+  getrennte Budgets, `agents/librarian.md`.
+* Aus Phase 4 vorgezogen, weil das Format es ohnehin tragen musste:
+  Quellendrift-Erkennung und Supersession statt Überschreiben.
+
+Offen sind Phase 3 (freigegebene Quellen), der Rest von Phase 4
+(Nutzungsverfolgung aus Transcripts, Prune-Vorschläge) und Phase 5.
+
+**Zu den Fragen in Abschnitt 13:** Frage 1 und 2 sind entschieden — der Bestand
+liegt beim Ziel-Skill und der Loop darf dort `knowledge/` anlegen. Grundlage
+ist die ursprüngliche Anforderung, der Skill solle dieses Wissen „in sich
+enthalten". Frage 3 ist als Default gesetzt (`knowledge_budget`, 4× das
+Token-Budget) und überschreibbar. Frage 4 ist offen.
 
 ---
 
@@ -182,9 +195,21 @@ Nicht im Bestand → sag das, ergänze nicht aus eigenem Wissen.
 <!-- FORGE_KNOWLEDGE_END -->
 ```
 
-Sie wird von `verify-regions` byteweise mitgeprüft wie die beiden anderen. Der
-Inhalt der Region ist Spur B und damit gate-pflichtig: ob dieser Verweis so
-formuliert wirkt, entscheidet der Score.
+**Korrektur gegenüber der ersten Fassung dieses Plans.** Dort stand, die Region
+werde von `verify-regions` byteweise mitgeprüft „wie die beiden anderen" — und
+im selben Absatz, ihr Inhalt sei Spur B und damit gate-pflichtig. Beides
+zusammen geht nicht: was byteweise geschützt ist, kann der Mutator nicht
+ändern, und was er nicht ändern kann, kann das Gate nicht bewerten. Die erste
+Formulierung des Verweises wäre für immer eingefroren.
+
+Richtig ist: Die Region steht **nicht** in `PROTECTED_REGIONS`. Ihr Inhalt ist
+gewöhnlicher, gate-pflichtiger SKILL.md-Text; die Marker dienen dazu, den
+Verweis mechanisch wiederzufinden, nicht ihn festzunageln. Die Frage „gibt es
+den Verweis überhaupt?" beantwortet stattdessen ein Lint in
+`knowledge.py verify`: liegen Claims im Bestand, aber die SKILL.md hat keine
+`FORGE_KNOWLEDGE`-Region, ist das eine Warnung — der Agent findet den Bestand
+sonst nie. Löscht der Mutator den Verweis und war er nützlich, fällt der Score
+und das Gate rollt zurück. Genau dafür ist es da.
 
 ## 6. Workspace-seitige Artefakte
 
