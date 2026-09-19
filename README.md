@@ -102,14 +102,16 @@ fall into four groups.
   per experiment; that rule is stricter than SkillOpt's edit budget of four and
   it stays.
 - **Meta memory.** A pattern store records what kind of edit works *for this
-  skill*. Optimizer-facing, never written into the target. Every bullet needs an
-  experiment id, every previous bullet gets a verdict.
+  skill*. Optimizer-facing, never written into the target. Uncapped, with the
+  index in the context and pages read on demand; evidence is appended
+  programmatically from `decision.json`, and a refuted pattern is marked with
+  the experiment that refuted it rather than deleted.
 - **Evidence is never truncated.** The context budget applies to history and
   notes, not to the transcripts of the current experiment.
 
 ### And it is tested
 
-283 tests under `tests/` (`python3 -m pytest tests/ -q`), including `test_review_findings.py`, which pins every
+400 tests under `tests/` (`python3 -m pytest tests/ -q`), including `test_review_findings.py`, which pins every
 defect two adversarial review rounds found in this code. A mutation test over 69
 targeted code changes drove the remaining blind spots out.
 
@@ -206,6 +208,7 @@ goes through one of them.
 | `tsv-init` / `tsv-append` | Flat log, direction-aware |
 | `coverage-init` / `coverage-update` | Coverage matrix with saturation |
 | `compact` / `agent-history` / `group-history` | History views for the agents |
+| `purpose-append` | Why a kept change looks like this, into the target's `PURPOSE.md`, with the rejected predecessors |
 | `checkpoint-save` / `checkpoint-info` | Resume across sessions and crashes |
 
 `scripts/knowledge.py` holds the knowledge-gap queue. Separate script, separate
@@ -534,6 +537,7 @@ Tracks which categories of improvements have been tried, with saturation detecti
 | **Mutation diversity** | Coverage matrix tracks which categories were tried, with saturation detection |
 | **Eval rotation in train only** | Fresh queries replace the oldest train evals after 5 experiments. val and test stay frozen; changing val forces a re-baseline |
 | **Longitudinal comparison** | `compare` lists regressions individually instead of netting them against improvements |
+| **Transfer set** | An optional second eval set from a different context shows what val and test cannot: adaptation to the one model and setup. Measured and reported, never gated |
 | **Success protection list** | `success_patterns` stop `prune` from removing the sections that carry the passing evals |
 | **No invented facts** | A missing fact is reported as a question, never filled in from model memory. A plausible-sounding invention passes assertions better than a clumsy truth, so the gate would reward it |
 
@@ -613,6 +617,55 @@ outcome from `decision.json`, since an agent that writes its own support count
 is citing itself. And **mistakes stay readable**: a pattern contradicted by a
 later experiment is marked `widerlegt` with the experiment that did it, not
 deleted, so the same wrong turn is not rediscovered three rounds later.
+
+### Why the skill looks like this
+
+The optimized skill gets a `PURPOSE.md` beside its `SKILL.md`: one entry per
+kept change, with the rejected attempts in the same category that preceded it.
+
+```markdown
+## exp-005 — examples — example_add — 2026-09-19
+
+**Hypothese:** Example for edge case X added
+**Score:** 0.7200 → 0.7900 (+0.0700)
+
+Vorher verworfen in derselben Kategorie:
+- exp-002 instruction_edit NEUTRAL (-0.0050) — rule reworded
+- exp-004 instruction_edit NEUTRAL (+0.0100) — rule tightened
+```
+
+The same information lives in `history.json` and `rejected.jsonl` — but those
+stay in the workspace. Once the skill is handed over, nobody can see why a
+section exists or which more obvious version already failed. Each rejected
+attempt is attributed exactly once, to the next kept change after it. The file
+does not count against `token_budget`: the agent never reads it at runtime.
+
+### What val and test cannot see
+
+The three-way split protects against memorizing the test cases. It does not
+protect against adapting to the one model and the one setup the run happened
+under — train, val and test come from the same distribution and run under the
+same model.
+
+WikiSkill measures what that can produce: skills a smaller model had evolved
+for itself dropped a stronger model on the same task from 50.5% to **18.1%**.
+The cause was low-level workarounds for the smaller model's weaknesses that
+held the stronger one back. The gate cannot see that damage — it measures
+exactly the combination the workaround was built for.
+
+Two countermeasures, neither touching the gate. The mutator must answer, before
+every new rule: *would this rule still be right for a stronger model or a
+different setup, or does it work around a limitation of the current one?* And
+an optional `transfer_evals` set from a different context is scored twice —
+baseline and final — and reported. **It decides nothing**, for the same reason
+the test split decides nothing: what gets optimized against stops measuring
+anything. val rising while transfer falls is the signature of a workaround, and
+the report says so.
+
+To be clear about the source: WikiSkill gates on a single `Dval`, not across
+targets. Its transfer numbers are analysis, not a gatekeeper. Gating across
+several targets would be its own design decision with its own cost (every round
+measures n times) and is deliberately not built here.
 
 ### Two tracks
 
@@ -774,6 +827,7 @@ file against a baseline it no longer matches.
 | `time_budget_minutes` | 120 | Time budget (for scheduled tasks) |
 | `split_ratio` | 0.50/0.25/0.25 | train/val/test ratio (Skill Mode) |
 | `split_seed` | 42 | Seed of the hash assignment. Changing it moves every eval and forces a re-baseline |
+| `transfer_evals` | null | Optional second eval set from a different context. Measured twice and reported, never gated |
 | `min_evals` | 6 | Below this the wizard refuses to start |
 | `min_evals_for_test` | 12 | Below this there is no test split |
 | `resolution` | (computed) | `2 / N_assertions`, a lower bound on the keep threshold |
@@ -806,7 +860,7 @@ file against a baseline it no longer matches.
 python3 -m pytest tests/ -q
 ```
 
-394 tests across thirteen files. They cover the decision cascade and its threshold edge cases,
+400 tests across thirteen files. They cover the decision cascade and its threshold edge cases,
 gate scoring and `--side`, the three-way split, diff and comparison, protected regions and
 the appendix, the rejected buffer, the token budget, the invariant checks, generic mode,
 and every CLI exit code, plus the knowledge-gap queue, the `DEFERRED` path, and the five gates guarding the vault.

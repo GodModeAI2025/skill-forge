@@ -2285,6 +2285,140 @@ def format_rejected(path: str, limit: int = 10) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+# ─── PURPOSE.md: warum der Skill so aussieht ──────────────────────────────
+
+
+PURPOSE_HEADER = """# Warum dieser Skill so aussieht
+
+<!-- Vom Skill Forge Loop geführt. Der Agent liest diese Datei zur Laufzeit
+     nicht; sie ist für Menschen und für den nächsten Optimierer da. -->
+
+Ein Eintrag je behaltener Änderung, in der Reihenfolge ihrer Entstehung.
+Verworfene Vorversuche stehen dabei, weil sie erklären, warum die behaltene
+Fassung so aussieht und nicht anders — ohne sie liest sich die Datei wie ein
+Changelog, und der teuerste Teil der Information fehlt.
+"""
+
+PURPOSE_ENTRY_RE = re.compile(
+    r"^## (?P<experiment>exp-\d+) — (?P<category>[^—]+) — ", re.MULTILINE
+)
+
+
+def read_purpose_entries(purpose_path: str) -> list:
+    """Bereits verzeichnete Einträge als ``[{experiment, category}]``."""
+    path = Path(purpose_path)
+    if not path.exists():
+        return []
+    return [
+        {"experiment": m.group("experiment"),
+         "category": m.group("category").strip()}
+        for m in PURPOSE_ENTRY_RE.finditer(path.read_text(encoding="utf-8"))
+    ]
+
+
+def _exp_number(experiment_id: str) -> int:
+    match = re.search(r"(\d+)", str(experiment_id))
+    return int(match.group(1)) if match else -1
+
+
+def rejected_predecessors(rejected_path: str, category: str,
+                          before_experiment: str,
+                          after_experiment: str | None = None) -> list:
+    """Verworfene Versuche derselben Kategorie, die dieser Änderung vorausgingen.
+
+    Das ist der eigentliche Wert der Datei. Ein Changelog sagt, was drinsteht;
+    diese Liste sagt, was zuerst nicht funktioniert hat — und genau daran
+    erkennt ein späterer Leser, ob er einen bereits gescheiterten Weg gerade
+    wieder einschlägt.
+
+    Abgegrenzt wird nach unten durch den zuletzt in PURPOSE.md verzeichneten
+    Eintrag derselben Kategorie: jeder verworfene Versuch wird genau einmal
+    zugeordnet, nämlich der nächsten behaltenen Änderung nach ihm.
+    """
+    upper = _exp_number(before_experiment)
+    lower = _exp_number(after_experiment) if after_experiment else -1
+    hits = []
+    for entry in read_rejected(rejected_path):
+        if (entry.get("category") or "").strip() != category.strip():
+            continue
+        number = _exp_number(entry.get("experiment", ""))
+        if lower < number < upper:
+            hits.append(entry)
+    return sorted(hits, key=lambda e: _exp_number(e.get("experiment", "")))
+
+
+def append_purpose(purpose_path: str, *, experiment: str, category: str,
+                   mutation_type: str, hypothesis: str,
+                   section: str = "", score_before: float | None = None,
+                   score_after: float | None = None,
+                   delta: float | None = None,
+                   rejected_path: str | None = None,
+                   knowledge: list | None = None,
+                   pattern: str | None = None) -> dict:
+    """Schreibt fort, warum eine behaltene Änderung so aussieht.
+
+    Die Datei liegt beim Ziel-Skill und wird mit ihm weitergegeben. Sie zählt
+    **nicht** gegen ``token_budget``: der Agent liest sie zur Laufzeit nicht,
+    und sie steht deshalb auch nicht im Scope von ``artifact-stats``.
+
+    Idempotent über die Experiment-ID. Ein Resume, das dasselbe Experiment
+    erneut verbucht, hängt keinen zweiten Eintrag an.
+    """
+    path = Path(purpose_path)
+    existing = read_purpose_entries(purpose_path)
+    if any(e["experiment"] == experiment for e in existing):
+        return {"appended": False, "reason": "bereits verzeichnet",
+                "experiment": experiment}
+
+    previous = [e for e in existing if e["category"].strip() == category.strip()]
+    after = previous[-1]["experiment"] if previous else None
+    predecessors = (
+        rejected_predecessors(rejected_path, category, experiment, after)
+        if rejected_path else []
+    )
+
+    lines = ["", "## %s — %s — %s — %s" % (
+        experiment, category, mutation_type, _utc_now()[:10]
+    ), ""]
+    lines.append("**Hypothese:** %s" % " ".join(str(hypothesis).split()))
+    if section:
+        lines.append("**Abschnitt:** %s" % section)
+    if score_before is not None and score_after is not None:
+        shown = delta if delta is not None else score_after - score_before
+        lines.append("**Score:** %.4f → %.4f (%+.4f)"
+                     % (score_before, score_after, shown))
+    if pattern:
+        lines.append("**Muster:** %s" % pattern)
+    if knowledge:
+        lines.append("**Wissen:** %s" % ", ".join(str(k) for k in knowledge))
+
+    if predecessors:
+        lines += ["", "Vorher verworfen in derselben Kategorie:"]
+        for entry in predecessors:
+            before, after_score = entry.get("score_before"), entry.get("score_after")
+            delta_text = ""
+            if isinstance(before, (int, float)) and isinstance(after_score, (int, float)):
+                delta_text = " (%+.4f)" % (after_score - before)
+            lines.append("- %s %s %s%s — %s" % (
+                entry.get("experiment", "?"),
+                entry.get("mutation_type", "?"),
+                entry.get("decision", "?"),
+                delta_text,
+                _flatten(entry.get("hypothesis", ""))[:120] or "ohne Hypothese",
+            ))
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text(PURPOSE_HEADER, encoding="utf-8")
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write("\n".join(lines).rstrip() + "\n")
+    return {
+        "appended": True, "experiment": experiment, "category": category,
+        "predecessors": [e.get("experiment") for e in predecessors],
+        "path": str(path),
+    }
+
+
 # ─── Tiered History ──────────────────────────────────────────────────────
 
 
@@ -2643,6 +2777,26 @@ def main():
     )
 
     # Plateau
+    purpose_parser = subparsers.add_parser(
+        "purpose-append",
+        help="Warum eine behaltene Änderung so aussieht, in die PURPOSE.md des Ziels",
+    )
+    purpose_parser.add_argument("purpose_path", help="Pfad zur PURPOSE.md des Ziel-Skills")
+    purpose_parser.add_argument("--experiment", required=True)
+    purpose_parser.add_argument("--category", required=True)
+    purpose_parser.add_argument("--mutation-type", required=True)
+    purpose_parser.add_argument("--hypothesis", required=True)
+    purpose_parser.add_argument("--section", default="")
+    purpose_parser.add_argument("--before", type=float, dest="score_before")
+    purpose_parser.add_argument("--after", type=float, dest="score_after")
+    purpose_parser.add_argument("--delta", type=float)
+    purpose_parser.add_argument(
+        "--rejected", dest="rejected_path",
+        help="rejected.jsonl; liefert die verworfenen Vorversuche",
+    )
+    purpose_parser.add_argument("--knowledge", action="append", default=[])
+    purpose_parser.add_argument("--pattern")
+
     plateau_parser = subparsers.add_parser(
         "plateau", help="Prüfen, ob die letzten N Entscheidungen ein Plateau sind"
     )
@@ -2997,6 +3151,17 @@ def main():
             print(json.dumps(result, indent=2, ensure_ascii=False))
         else:
             print(format_comparison(result))
+
+    elif args.command == "purpose-append":
+        result = append_purpose(
+            args.purpose_path, experiment=args.experiment,
+            category=args.category, mutation_type=args.mutation_type,
+            hypothesis=args.hypothesis, section=args.section,
+            score_before=args.score_before, score_after=args.score_after,
+            delta=args.delta, rejected_path=args.rejected_path,
+            knowledge=args.knowledge, pattern=args.pattern,
+        )
+        print(json.dumps(result, indent=2, ensure_ascii=False))
 
     elif args.command == "plateau":
         history = json.loads(Path(args.history_path).read_text())

@@ -130,6 +130,31 @@ Abschnitte nach dem Fehlerfall, nicht nach dem Thema. Fehlerbenannte Abschnitte
 funktionieren mitten in der Aufgabe als Abrufschlüssel ("stecke ich gerade in
 dieser Falle?"), themenbenannte nicht.
 
+### 4.2b. Verfahren statt Notbehelf
+
+Die Regel muss ein **Verfahren** beschreiben, keinen Notbehelf für die
+Schwächen des gerade laufenden Modells. Der Unterschied ist nicht kosmetisch.
+
+WikiSkill (arXiv:2608.27454) misst ihn: dort senkten Skills, die ein kleineres
+Modell für sich entwickelt hatte, die Leistung eines stärkeren Modells auf
+derselben Aufgabe von 50,5 % auf **18,1 %**. Die Ursachenanalyse nennt zwei
+Gründe, und beide lesen sich wie plausible Mutationen: die Skills kodierten
+niedrigschwellige Umgehungen (einzeilige Kommandos, Regeln zur
+String-Konvertierung), die dem kleineren Modell Ausführungsfehler ersparten
+und das stärkere daran hinderten, den direkten Weg zu gehen; und sie
+zerlegten Diagnosen so kleinteilig, dass die zusätzlichen Werkzeugaufrufe das
+Interaktionsbudget aufbrauchten.
+
+Prüffrage vor jeder neuen Regel:
+
+> Wäre diese Regel auch für ein stärkeres Modell oder einen anderen Aufbau
+> richtig — oder umgeht sie eine Einschränkung des gerade laufenden?
+
+Umgeht sie eine Einschränkung, schreib das in `risk`. Der Gate-Score sieht
+diesen Schaden nicht: er misst genau die Kombination aus Modell und Eval-Set,
+für die der Notbehelf gebaut wurde. Er wird also belohnt, und sichtbar wird der
+Preis erst bei jemand anderem.
+
 ### 4.3. Schutzliste beachten
 
 Der Hypothesis-Agent liefert `success_patterns`. Das ist deine Schutzliste.

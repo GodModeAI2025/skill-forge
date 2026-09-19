@@ -1045,7 +1045,27 @@ python3 scripts/composite_score.py rejected-append \
    Regression ist mindestens so lehrreich wie ein Beinahe-Treffer. Die Datei
    liegt bewusst neben der History, weil die Kompaktierung sie sonst kürzt.
 
-5. **LAPSE-Notizen anhängen, als LETZTEN Schreibvorgang des Schritts.**
+5. **Bei KEEP: in die PURPOSE.md des Ziel-Skills schreiben.**
+
+```bash
+python3 scripts/composite_score.py purpose-append <ziel-verzeichnis>/PURPOSE.md \
+  --experiment exp-<NNN> --category <kategorie> \
+  --mutation-type <typ> --hypothesis "<hypothese>" \
+  --section "<abschnitt>" --before <score> --after <score> \
+  --rejected <workspace>/rejected.jsonl \
+  [--pattern P-NNNN] [--knowledge C-NNNN]
+```
+
+   `--rejected` ist der Punkt der Übung: der Befehl hängt die verworfenen
+   Versuche derselben Kategorie an, die dieser Änderung vorausgingen. Ohne sie
+   ist die Datei ein Changelog. Mit ihnen erkennt ein späterer Leser, dass er
+   gerade einen bereits gescheiterten Weg wieder einschlägt.
+
+   Jeder verworfene Versuch wird genau einmal zugeordnet, nämlich der nächsten
+   behaltenen Änderung nach ihm. Der Aufruf ist über die Experiment-ID
+   idempotent.
+
+6. **LAPSE-Notizen anhängen, als LETZTEN Schreibvorgang des Schritts.**
 
 ```bash
 python3 scripts/composite_score.py appendix-append \
@@ -1163,11 +1183,14 @@ Lies `templates/morning_report.md` und erzeuge einen Abschlussbericht:
 6. **Fehlgeschlagene Hypothesen**: Was nicht funktioniert hat (und warum)
 7. **Coverage-Matrix**: Welche Bereiche wie oft getestet, wo Lücken bestehen
 8. **Score-Verlauf**: Grafische Darstellung als ASCII-Chart
-9. **Offene Wissensfragen**: Der Block aus
+9. **Transfer**: Falls ein Transfer-Set konfiguriert ist, beide Werte und die
+   Richtung auf val. Gegenläufige Richtungen sind die Signatur eines
+   Notbehelfs
+10. **Offene Wissensfragen**: Der Block aus
    `python3 scripts/knowledge.py gap-format <workspace>/knowledge-gaps.jsonl`.
    Jede Frage ist ein Fehler, den keine Umformulierung behebt. Steht der Block
    leer, gehört genau das hin statt eines weggelassenen Abschnitts
-10. **Empfehlungen**: Was der User als nächstes tun könnte
+11. **Empfehlungen**: Was der User als nächstes tun könnte
 
 Speichere den Report als `morning-report.md` im Workspace.
 
@@ -1287,6 +1310,7 @@ Standardwerte, die der User überschreiben kann:
 | `time_budget_minutes` | 120 | Zeitbudget (für Scheduled Tasks) |
 | `split_ratio` | 0.50/0.25/0.25 | train/val/test der Evals (nur Skill-Modus) |
 | `split_seed` | 42 | Seed der Hash-Zuordnung. Ändern verschiebt alle Evals und erzwingt ein Re-Baseline |
+| `transfer_evals` | null | Optionales zweites Eval-Set aus einem anderen Kontext. Wird zweimal gemessen und berichtet, entscheidet nie |
 | `min_evals` | 6 | Darunter lehnt der Wizard ab |
 | `min_evals_for_test` | 12 | Darunter gibt es keinen test-Split |
 | `resolution` | (berechnet) | `2 / N_assertions`, geht als Untergrenze in die Keep-Schwelle |
@@ -1702,6 +1726,89 @@ SkillSafe-Wissenstresor.
 
 ---
 
+## Warum der Skill so aussieht: `PURPOSE.md`
+
+Der optimierte Skill bekommt neben der SKILL.md eine `PURPOSE.md`: ein Eintrag
+je behaltener Änderung, mit den verworfenen Vorversuchen derselben Kategorie.
+
+```markdown
+## exp-005 — examples — example_add — 2026-09-19
+
+**Hypothese:** Beispiel für Edge-Case X hinzugefügt
+**Abschnitt:** ## Workflow
+**Score:** 0.7200 → 0.7900 (+0.0700)
+**Muster:** P-0001
+**Wissen:** C-0001
+
+Vorher verworfen in derselben Kategorie:
+- exp-002 instruction_edit NEUTRAL (-0.0050) — Regel präziser formuliert
+- exp-004 instruction_edit NEUTRAL (+0.0100) — Regel verschärft
+```
+
+Dieselbe Information steht in `history.json` und `rejected.jsonl` — aber die
+liegen im Workspace. Nach der Weitergabe des Skills kann niemand mehr sehen,
+warum ein Abschnitt existiert und welche naheliegendere Fassung schon
+gescheitert ist. Das Vorbild ist WikiSkills `PURPOSE.md`, die einen Skill auf
+die Muster zurückführt, die ihn motiviert haben, samt der verworfenen
+Vorversuche („Previous attempt goal-directed-action was rejected for being too
+abstract").
+
+**Die Datei zählt nicht gegen `token_budget`.** Der Agent liest sie zur
+Laufzeit nicht; sie steht deshalb auch nicht im Scope von `artifact-stats`.
+Wächst sie über die Zeit, kostet das nichts, was ein Lauf bezahlen müsste. Wer
+den Scope-Glob im Generic-Modus setzt, sollte sie trotzdem nicht einsammeln.
+
+---
+
+## Transfer: was val und test nicht sehen können
+
+Der Dreiwege-Split schützt davor, die eigenen Testfälle auswendig zu lernen. Er
+schützt **nicht** davor, sich an das eine Modell und den einen Aufbau
+anzupassen, unter dem der Lauf stattfand — train, val und test stammen aus
+derselben Verteilung und laufen unter demselben Modell.
+
+WikiSkill (arXiv:2608.27454) misst, was dabei entstehen kann: Skills, die ein
+kleineres Modell für sich entwickelt hatte, senkten die Leistung eines
+stärkeren Modells auf derselben Aufgabe von 50,5 % auf **18,1 %**. Die Ursache
+waren niedrigschwellige Umgehungen der Schwächen des kleineren Modells, die das
+stärkere ausbremsten. Der Gate-Score sieht diesen Schaden nicht: er misst genau
+die Kombination, für die der Notbehelf gebaut wurde.
+
+Zwei Gegenmittel, beide ohne Eingriff ins Gate:
+
+**1. Die Prüffrage im Prompt.** `agents/mutator.md` Abschnitt 4.2b verlangt vor
+jeder neuen Regel:
+
+> Wäre diese Regel auch für ein stärkeres Modell oder einen anderen Aufbau
+> richtig — oder umgeht sie eine Einschränkung des gerade laufenden?
+
+Umgeht sie eine, gehört das in `risk` und in `generalizability`.
+
+**2. Ein Transfer-Set (optional).** Der User kann ein zweites Eval-Set
+angeben, das aus einem anderen Kontext stammt — anderes Projekt, andere
+Dokumentsorte, nach Möglichkeit anderes Modell:
+
+```json
+{"transfer_evals": "<pfad>/transfer-evals.json"}
+```
+
+Es wird genau zweimal angefasst, wie der test-Split: Baseline vor Experiment 1
+und Endversion im Report. Gemessen wird mit derselben Maschinerie
+(`score --side`), es braucht keinen eigenen Befehl.
+
+**Das Transfer-Set entscheidet nichts.** Es geht in keine Keep-Entscheidung
+ein. Der Grund ist derselbe, aus dem der test-Split nicht entscheidet: was
+mitoptimiert wird, misst nichts mehr. Bewegt sich val nach oben und das
+Transfer-Set nach unten, ist das die Signatur eines Notbehelfs, und der Report
+sagt es — die Konsequenz zieht der Mensch.
+
+**Zur Abgrenzung:** WikiSkill gated ausdrücklich **nicht** über mehrere Ziele,
+sondern auf einem einzigen `Dval`. Die Transferzahlen dort sind Analyse, nicht
+Torwächter. Ein Gate über mehrere Ziele wäre eine eigene Entwurfsentscheidung
+mit eigenen Kosten (jede Runde misst n-mal) und steht hier bewusst nicht.
+
+---
+
 ## Geschützte Regionen
 
 Zwei Regionen in der Ziel-SKILL.md sind für den Mutator tabu:
@@ -1769,7 +1876,11 @@ Gegenmaßnahmen:
 9. **Kein erfundenes Wissen**: Kein Claim ohne registrierte Quelle und
    Fundstelle. Eine plausibel klingende Erfindung besteht Assertions besser als
    eine sperrige Wahrheit — das Gate belohnte sie, statt sie zu fangen.
-10. **Erfolge werden nach Herkunft gelesen**: Ein bestandener train-Eval,
+10. **Transfer-Set gegen Notbehelfe**: Ein optionales zweites Eval-Set aus
+    einem anderen Kontext zeigt, was val und test nicht sehen können — die
+    Anpassung an das eine Modell und den einen Aufbau. Es wird gemessen und
+    berichtet, entscheidet aber nichts.
+11. **Erfolge werden nach Herkunft gelesen**: Ein bestandener train-Eval,
     dessen Run Claims gelesen hat, geht nicht als `success_pattern` in die
     Schutzliste des Mutators ein. Sonst schützt die Liste Abschnitte, die den
     Erfolg gar nicht getragen haben.

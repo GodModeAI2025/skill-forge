@@ -664,7 +664,25 @@ Signalkontamination, nicht Laufzeitschaden.
    über Index im Kontext und Seiten auf Abruf. Evidenz schreibt der
    Orchestrator aus `decision.json`, nicht der Meta-Agent. Widerlegte Muster
    bleiben mit dem widersprechenden Experiment stehen.
-2. **`PURPOSE.md` je Skill**: ein Rückverweis vom Skill auf das Wissen, das ihn
-   motiviert hat, inklusive verworfener Vorversuche. Wir haben das in
-   `history.json`, aber nicht im weitergegebenen Artefakt.
-3. **Validierung über mehrere Ziele**, nicht nur mehrere Evals eines Ziels.
+2. ~~**`PURPOSE.md` je Skill**~~ **Umgesetzt.** `purpose-append` schreibt je
+   behaltener Änderung einen Eintrag in die `PURPOSE.md` des Ziel-Skills, samt
+   der verworfenen Vorversuche derselben Kategorie. Jeder Fehlversuch wird
+   genau einmal zugeordnet; die Datei zählt nicht gegen das Token-Budget, weil
+   der Agent sie zur Laufzeit nicht liest.
+3. **Validierung über mehrere Ziele** — **teilweise, und mit einer Korrektur.**
+
+   Die Formulierung „muss den Score über jede registrierte Repository
+   verbessern" stammte aus einem Nachbau-README, nicht aus dem Paper. WikiSkill
+   gated auf einem einzigen `Dval`; die Transferzahlen dort sind Analyse, nicht
+   Torwächter.
+
+   Papiergedeckt ist dagegen der **negative Transfer** (Tabelle 2, §4.2): Skills
+   eines kleineren Modells senkten ein stärkeres von 50,5 % auf 18,1 %, weil sie
+   niedrigschwellige Umgehungen kodierten. Daraus umgesetzt: die Prüffrage im
+   Mutator (Abschnitt 4.2b) und ein optionales `transfer_evals`-Set, das
+   zweimal gemessen und berichtet wird — wie der test-Split, und ebenso ohne
+   Entscheidungsgewalt.
+
+   **Nicht** gebaut: ein Gate über mehrere Ziele. Das wäre eine eigene
+   Entwurfsentscheidung mit eigenen Kosten (jede Runde misst n-mal) und hat im
+   Paper keine Grundlage.

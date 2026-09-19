@@ -358,7 +358,11 @@ BEOBACHTUNG: [Was in den Ergebnissen passiert]
 URSACHE: [Warum es passiert]
 HYPOTHESE: [Was geändert werden sollte]
 ERWARTETER IMPACT: [Welche Metriken/Assertions sollten sich verbessern]
-GENERALISIERBARKEIT: [Warum diese Änderung über die aktuellen Tests hinaus hilft]
+GENERALISIERBARKEIT: [Warum diese Änderung über die aktuellen Tests hinaus hilft.
+  Konkrete Prüffrage: Wäre die Regel auch für ein stärkeres Modell oder einen
+  anderen Aufbau richtig, oder umgeht sie eine Einschränkung des gerade
+  laufenden? Siehe agents/mutator.md 4.2b — ein Notbehelf hebt den Gate-Score
+  und kostet woanders.]
 KATEGORIE: [Aus der Coverage-Matrix: formatting, workflow, edge_cases, etc.]
 ```
 

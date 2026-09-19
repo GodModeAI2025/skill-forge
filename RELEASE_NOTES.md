@@ -1,6 +1,6 @@
 # Release Notes
 
-## Unreleased: Rauschgrenze gemessen, Metrik markiert, Wissen erkannt und aufgenommen, Optimierer-Gedächtnis entdeckelt
+## Unreleased: Rauschgrenze, Metrik, Wissen, Optimierer-Gedächtnis und Herkunft
 
 _Versionsnummer vergibt der Owner beim Release; Stand 2026-09-19._
 
@@ -236,7 +236,48 @@ Verteilung, die Deutung bleibt beim Leser.
 die Datei einmal als Ausgangsmaterial — jeder Bullet mit Experiment-ID wird eine
 Musterseite — und schreibt sie danach nicht mehr fort.
 
-25 neue Tests. Die Suite steht damit bei 394.
+25 neue Tests.
+
+**Nach der Weitergabe wusste niemand mehr, warum ein Abschnitt existiert.**
+`history.json` und `rejected.jsonl` halten das fest, liegen aber im Workspace.
+Der optimierte Skill bekommt jetzt eine `PURPOSE.md`: ein Eintrag je behaltener
+Änderung, mit Hypothese, Abschnitt, Score-Verlauf — und den verworfenen
+Vorversuchen derselben Kategorie, die ihr vorausgingen. Ohne die liest sich die
+Datei wie ein Changelog; mit ihnen erkennt ein späterer Leser, dass er gerade
+einen bereits gescheiterten Weg wieder einschlägt. Jeder Fehlversuch wird genau
+einmal zugeordnet, nämlich der nächsten behaltenen Änderung nach ihm. Die Datei
+zählt nicht gegen `token_budget`, weil der Agent sie zur Laufzeit nicht liest.
+Vorbild ist WikiSkills `PURPOSE.md` („Previous attempt goal-directed-action was
+rejected for being too abstract").
+
+**Der Dreiwege-Split sieht eine Sorte Überanpassung nicht.** Er schützt davor,
+die eigenen Testfälle auswendig zu lernen. Er schützt nicht davor, sich an das
+eine Modell und den einen Aufbau anzupassen, unter dem der Lauf stattfand —
+train, val und test stammen aus derselben Verteilung und laufen unter demselben
+Modell. WikiSkill misst, was dabei entstehen kann: Skills, die ein kleineres
+Modell für sich entwickelt hatte, senkten ein stärkeres auf derselben Aufgabe
+von 50,5 % auf 18,1 %, weil sie niedrigschwellige Umgehungen seiner Schwächen
+kodierten. Der Gate-Score sieht diesen Schaden nicht — er misst genau die
+Kombination, für die der Notbehelf gebaut wurde.
+
+Zwei Gegenmittel, beide ohne Eingriff ins Gate. `agents/mutator.md` hat einen
+neuen Abschnitt 4.2b mit der Prüffrage vor jeder Regel: wäre sie auch für ein
+stärkeres Modell oder einen anderen Aufbau richtig, oder umgeht sie eine
+Einschränkung des gerade laufenden? Und ein optionales `transfer_evals`-Set aus
+einem anderen Kontext wird zweimal gemessen — Baseline und Endversion — und
+berichtet. **Es entscheidet nichts**, aus demselben Grund, aus dem der
+test-Split nichts entscheidet: was mitoptimiert wird, misst nichts mehr.
+Steigendes val bei fallendem Transfer ist die Signatur eines Notbehelfs, und
+der Report sagt das.
+
+**Eine Korrektur an der eigenen Analyse.** Die Formulierung „muss den Score über
+jede registrierte Repository verbessern", die in einer früheren Sitzungsnotiz
+als Vorbild auftauchte, stammt aus einem Nachbau-README und nicht aus dem
+Paper. WikiSkill gated auf einem einzigen `Dval`; seine Transferzahlen sind
+Analyse, nicht Torwächter. Ein Gate über mehrere Ziele wäre eine eigene
+Entwurfsentscheidung mit eigenen Kosten und ist bewusst nicht gebaut.
+
+6 neue Tests. Die Suite steht damit bei 400.
 
 ## v3.4 (2026-07-29): Härtung nach der adversarialen Review
 

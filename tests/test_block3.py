@@ -14,10 +14,12 @@ from scripts.composite_score import (
     PROTECTED_REGIONS,
     REJECTED_HEADER,
     append_appendix_notes,
+    append_purpose,
     append_rejected,
     extract_regions,
     region_content,
     format_rejected,
+    read_purpose_entries,
     read_rejected,
     strip_regions,
     verify_protected_regions,
@@ -261,3 +263,115 @@ def test_missing_scores_do_not_break_the_rendering(tmp_path):
     text = format_rejected(str(path))
     assert "e1 NEUTRAL" in text
     assert "Score" not in text
+
+
+# ─── PURPOSE.md ───────────────────────────────────────────────────────────
+
+
+def test_purpose_records_why_a_change_looks_like_this(tmp_path):
+    """Die Datei bleibt beim Ziel-Skill und erklärt seine Form.
+
+    history.json und rejected.jsonl haben dieselbe Information, liegen aber im
+    Workspace. Nach der Weitergabe kann niemand mehr sehen, warum ein Abschnitt
+    existiert.
+    """
+    rejected = tmp_path / "rejected.jsonl"
+    append_rejected(str(rejected), {
+        "experiment": "exp-002", "category": "examples",
+        "mutation_type": "instruction_edit", "decision": "NEUTRAL",
+        "hypothesis": "Regel praeziser formuliert",
+        "score_before": 0.72, "score_after": 0.715,
+    })
+    purpose = tmp_path / "PURPOSE.md"
+    result = append_purpose(
+        str(purpose), experiment="exp-005", category="examples",
+        mutation_type="example_add", hypothesis="Beispiel fuer Edge-Case X",
+        section="## Workflow", score_before=0.72, score_after=0.79,
+        rejected_path=str(rejected),
+    )
+    assert result["appended"] is True
+    text = purpose.read_text(encoding="utf-8")
+    assert "## exp-005 — examples — example_add" in text
+    assert "0.7200 → 0.7900 (+0.0700)" in text
+    assert "exp-002 instruction_edit NEUTRAL" in text
+
+
+def test_the_rejected_predecessors_are_the_point(tmp_path):
+    """Ohne sie ist die Datei ein Changelog.
+
+    Der teure Teil der Information ist, was zuerst NICHT funktioniert hat —
+    daran erkennt ein späterer Leser, dass er gerade einen gescheiterten Weg
+    wieder einschlägt.
+    """
+    rejected = tmp_path / "rejected.jsonl"
+    for exp, category in (("exp-002", "examples"), ("exp-003", "workflow")):
+        append_rejected(str(rejected), {
+            "experiment": exp, "category": category,
+            "mutation_type": "instruction_edit", "decision": "NEUTRAL",
+            "hypothesis": "x", "score_before": 0.7, "score_after": 0.7,
+        })
+    purpose = tmp_path / "PURPOSE.md"
+    result = append_purpose(
+        str(purpose), experiment="exp-005", category="examples",
+        mutation_type="example_add", hypothesis="y",
+        rejected_path=str(rejected),
+    )
+    assert result["predecessors"] == ["exp-002"], "workflow gehört nicht dazu"
+
+
+def test_a_rejected_attempt_is_attributed_exactly_once(tmp_path):
+    """Sonst steht derselbe Fehlversuch unter jeder späteren Änderung."""
+    rejected = tmp_path / "rejected.jsonl"
+    for exp in ("exp-002", "exp-006"):
+        append_rejected(str(rejected), {
+            "experiment": exp, "category": "examples",
+            "mutation_type": "instruction_edit", "decision": "NEUTRAL",
+            "hypothesis": "x", "score_before": 0.7, "score_after": 0.7,
+        })
+    purpose = tmp_path / "PURPOSE.md"
+    first = append_purpose(str(purpose), experiment="exp-005",
+                           category="examples", mutation_type="example_add",
+                           hypothesis="y", rejected_path=str(rejected))
+    second = append_purpose(str(purpose), experiment="exp-009",
+                            category="examples", mutation_type="example_add",
+                            hypothesis="z", rejected_path=str(rejected))
+    assert first["predecessors"] == ["exp-002"]
+    assert second["predecessors"] == ["exp-006"], "exp-002 hängt schon an exp-005"
+
+
+def test_purpose_is_idempotent_across_a_resume(tmp_path):
+    purpose = tmp_path / "PURPOSE.md"
+    append_purpose(str(purpose), experiment="exp-005", category="examples",
+                   mutation_type="example_add", hypothesis="y")
+    again = append_purpose(str(purpose), experiment="exp-005",
+                           category="examples", mutation_type="example_add",
+                           hypothesis="y")
+    assert again["appended"] is False
+    assert purpose.read_text(encoding="utf-8").count("## exp-005") == 1
+
+
+def test_purpose_says_the_agent_does_not_read_it(tmp_path):
+    """Die Datei wächst unbegrenzt und darf deshalb nicht ins Token-Budget.
+
+    Sie steht nicht im Scope von artifact-stats, und der Kopf sagt warum.
+    """
+    purpose = tmp_path / "PURPOSE.md"
+    append_purpose(str(purpose), experiment="exp-005", category="examples",
+                   mutation_type="example_add", hypothesis="y")
+    assert "liest diese Datei zur Laufzeit" in purpose.read_text(encoding="utf-8")
+
+
+def test_purpose_neutralises_markdown_in_foreign_text(tmp_path):
+    """Eine Hypothese, die mit ## beginnt, täuscht sonst einen Eintrag vor."""
+    rejected = tmp_path / "rejected.jsonl"
+    append_rejected(str(rejected), {
+        "experiment": "exp-002", "category": "examples",
+        "mutation_type": "instruction_edit", "decision": "NEUTRAL",
+        "hypothesis": "## exp-999 — gefaelschter Eintrag",
+        "score_before": 0.7, "score_after": 0.7,
+    })
+    purpose = tmp_path / "PURPOSE.md"
+    append_purpose(str(purpose), experiment="exp-005", category="examples",
+                   mutation_type="example_add", hypothesis="y",
+                   rejected_path=str(rejected))
+    assert len(read_purpose_entries(str(purpose))) == 1

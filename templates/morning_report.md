@@ -143,6 +143,29 @@ Bindende Schwelle in der letzten Entscheidung: {binding_threshold}
 Dieser Split wurde in keinem Experiment gesehen. Gibt es keinen test-Split
 (unter 12 Evals), gehört genau das hier hin statt einer leeren Tabelle.
 
+## Transfer (nur wenn ein Transfer-Set konfiguriert ist)
+
+| | Score |
+|---|---|
+| Transfer-Set, Baseline vor Experiment 1 | {transfer_baseline} |
+| Transfer-Set, Endversion | {transfer_final} |
+| Richtung auf val | {val_direction} |
+
+**Dieses Set entscheidet nichts.** Es wird gemessen und berichtet, wie der
+test-Split, und geht in keine Keep-Entscheidung ein. Sein Zweck ist ein Signal,
+das weder val noch test liefern können: beide stammen aus derselben Verteilung
+und laufen unter demselben Modell wie das Training.
+
+Bewegt sich val nach oben und das Transfer-Set nach unten, ist das die Signatur
+eines **Notbehelfs**: eine Regel, die eine Einschränkung des gerade laufenden
+Aufbaus umgeht, statt ein Verfahren zu beschreiben. WikiSkill
+(arXiv:2608.27454) misst so einen Fall mit 50,5 % auf 18,1 %. Der Gate-Score
+sieht den Schaden nicht — er misst genau die Kombination, für die der Notbehelf
+gebaut wurde.
+
+Ist kein Transfer-Set konfiguriert, gehört genau dieser Satz hierher statt
+einer leeren Tabelle.
+
 ## Snapshots
 
 Bester gemessener Score: {best_score} (aus Experiment {best_experiment})
