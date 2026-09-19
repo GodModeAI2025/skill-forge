@@ -14,8 +14,9 @@ jenem Repository.
 * Aus Phase 4 vorgezogen: Quellendrift-Erkennung, Supersession statt
   Überschreiben, und die Nutzungsverfolgung aus den Transcripts.
 * Nach der Lektüre von WikiSkill (arXiv:2608.27454) nachgezogen: der
-  Bestands-Check vor dem Anlegen einer Lücke, und die beiden Leseregeln für
-  Ergebnisse aus Runs mit Bestandszugriff (Abschnitt 14).
+  Bestands-Check vor dem Anlegen einer Lücke, die beiden Leseregeln für
+  Ergebnisse aus Runs mit Bestandszugriff, und der entdeckelte Musterbestand
+  des Optimierers an Stelle von `editing-notes.md` (Abschnitt 14).
 
 Offen sind Phase 3 (freigegebene Quellen), die Prune-Vorschläge aus Phase 4
 und Phase 5.
@@ -657,13 +658,12 @@ Signalkontamination, nicht Laufzeitschaden.
 
 **Weiter offen, bewusst nicht gebaut:**
 
-1. **Verdichtetes Optimizer-Gedächtnis statt gedeckelter Bullets.** Ihr Wiki
-   hat kein Limit, wird patch-basiert verfeinert und nie zurückgesetzt; Seiten
-   sammeln Evidenz über Iterationen („Evidence: Iter 0: train 00,02 | Iter 1:
-   train 01 | Iter 2-4: train 02 persists"). Unsere Artefakte sind Protokolle
-   (`rejected.jsonl`, `history.archive.jsonl`), nicht verdichtetes Wissen. Das
-   ist Befund 1 und die grösste erwartete Wirkung — aber ein Umbau, der über
-   den Workspace hinaus lebt.
+1. ~~**Verdichtetes Optimizer-Gedächtnis statt gedeckelter Bullets.**~~
+   **Umgesetzt.** `scripts/patterns.py` plus `<workspace>/patterns/`: eine
+   Seite je Muster, unbegrenzt, mit Evidenz über Experimente hinweg. Bezahlbar
+   über Index im Kontext und Seiten auf Abruf. Evidenz schreibt der
+   Orchestrator aus `decision.json`, nicht der Meta-Agent. Widerlegte Muster
+   bleiben mit dem widersprechenden Experiment stehen.
 2. **`PURPOSE.md` je Skill**: ein Rückverweis vom Skill auf das Wissen, das ihn
    motiviert hat, inklusive verworfener Vorversuche. Wir haben das in
    `history.json`, aber nicht im weitergegebenen Artefakt.

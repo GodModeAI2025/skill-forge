@@ -1,6 +1,6 @@
 # Release Notes
 
-## Unreleased: Rauschgrenze gemessen, Metrik markiert, Wissen erkannt, aufgenommen und verrechnet
+## Unreleased: Rauschgrenze gemessen, Metrik markiert, Wissen erkannt und aufgenommen, Optimierer-Gedächtnis entdeckelt
 
 _Versionsnummer vergibt der Owner beim Release; Stand 2026-09-19._
 
@@ -184,7 +184,59 @@ Wiki enthält Verfahren, die in den Skill kompiliert werden sollen, unser
 Bestand enthält Tatsachen, die der Agent zur Laufzeit braucht. Übernommen ist
 die Konsequenz, nicht das Mittel.
 
-16 neue Tests. Die Suite steht damit bei 369.
+16 neue Tests.
+
+**Das Gedächtnis des Optimierers war auf acht Bullets gedeckelt.**
+`editing-notes.md` wurde alle fünf Experimente komplett neu geschrieben. Der
+Deckel hielt den Kontext klein; der Preis war, dass jede Erkenntnis nach
+spätestens zwei Runden herausfiel, sobald eine neuere wichtiger schien, und
+dass am Ende eines Laufs nichts blieb, worauf der nächste hätte aufbauen
+können.
+
+An die Stelle tritt ein unbegrenzter Musterbestand unter
+`<workspace>/patterns/`: eine Seite je Muster, die über Experimente hinweg
+Evidenz sammelt, statt einer Liste, die sich selbst überschreibt. Bezahlbar
+wird das durch die Trennung, die aus WikiSkill (arXiv:2608.27454) übernommen
+ist: **nur `INDEX.md` liegt permanent im Kontext, eine Seite wird einzeln
+gelesen, wenn ihr Titel zur Frage passt.** Zwanzig Muster kosten damit unter
+1200 Token dauerhaft. Ohne diese Trennung wäre ein unbegrenzter Bestand genau
+das Kontextproblem, gegen das der Achter-Deckel einmal gebaut wurde. Daraus
+folgt eine Anforderung an den Meta-Agenten, die jetzt in `agents/meta.md`
+steht: der Titel ist die wichtigste Zeile einer Seite, denn er entscheidet, ob
+sie je geöffnet wird.
+
+Der Anlass ist die stärkste Zahl des Papers: persistentes, über Iterationen
+verdichtetes Optimierer-Wissen bringt dort +15,0 Punkte im Schnitt über vier
+Benchmarks (48,7 % auf 63,7 %), auf einem davon +21,3. Es ist der grösste
+Einzeleffekt der Arbeit.
+
+Drei Regeln halten einen unbegrenzten Bestand davon ab, zu Rauschen zu werden.
+**Evidenz ist programmatisch, Deutung ist Sache des Agenten**: die
+Evidenzzeilen hängt der Orchestrator aus `decision.json` an, nicht der
+Meta-Agent — wer seine eigene Belegzahl schreibt, belegt sich selbst. Dieselbe
+Trennung wie bei WikiSkills `skill-impact.md`, das deren Harness schreibt und
+nicht der Proposer. **Ein Muster mit weniger als zwei gemessenen Belegen heisst
+`vorläufig`**, dieselbe Regel wie `min_support_count` bei den Hypothesen; SKIP,
+INVALID, NO_OP und DEFERRED zählen nicht als Beleg, weil sie nichts gemessen
+haben. Und **Irrtümer bleiben stehen**: ein widerlegtes Muster wird mit dem
+widersprechenden Experiment markiert, nicht gelöscht, damit derselbe Irrtum
+nicht in drei Runden neu entdeckt wird.
+
+Die abgeleiteten Zahlen — Stützzahl, Bestwert, `vorläufig` — stehen bewusst
+nicht auf der Platte, sondern werden bei jedem Lesen neu gerechnet. Das ist die
+Lektion aus der Coverage-Matrix, wo `saturated` einrastete und sich eine
+Kategorie nach einem späteren Treffer nie mehr erholte. Bewusst **keine**
+Trefferquote: ein Muster kann positiv behaupten („Beispiele nehmen hier") oder
+negativ („Prosa-Umformulierungen nicht"), und im zweiten Fall belegen
+NEUTRAL-Zeilen das Muster, während KEEP-Zeilen ihm widersprächen. Eine einzelne
+Quote hiesse für die beiden Fälle Gegenteiliges; ausgewiesen wird die
+Verteilung, die Deutung bleibt beim Leser.
+
+Ältere Workspaces mit `editing-notes.md` verlieren nichts: der Meta-Agent liest
+die Datei einmal als Ausgangsmaterial — jeder Bullet mit Experiment-ID wird eine
+Musterseite — und schreibt sie danach nicht mehr fort.
+
+25 neue Tests. Die Suite steht damit bei 394.
 
 ## v3.4 (2026-07-29): Härtung nach der adversarialen Review
 

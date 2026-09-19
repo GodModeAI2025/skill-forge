@@ -101,7 +101,7 @@ fall into four groups.
   ranks them against four criteria in the same prompt. Still exactly one change
   per experiment; that rule is stricter than SkillOpt's edit budget of four and
   it stays.
-- **Meta memory.** `editing-notes.md` records what kind of edit works *for this
+- **Meta memory.** A pattern store records what kind of edit works *for this
   skill*. Optimizer-facing, never written into the target. Every bullet needs an
   experiment id, every previous bullet gets a verdict.
 - **Evidence is never truncated.** The context budget applies to history and
@@ -173,7 +173,7 @@ deliberate reward hacks were each rejected.
 │     ▼
 │    tsv-append · coverage-update · artifact-stats · checkpoint-save
 │     │
-└─────┘  every 5 experiments: editing-notes.md
+└─────┘  every 5 experiments: patterns/
          stop on: target reached · max_experiments · 3 consecutive non-KEEP
                   · time budget · 3 consecutive crashes
 
@@ -229,6 +229,20 @@ a list of open questions, and the two fail in different ways.
 | `usage-update` | Records from the transcripts which run read which claims |
 | `usage-format` | The usage block rendered into the hypothesis agent's context |
 
+`scripts/patterns.py` holds the optimizer's own memory — what kind of edit works
+*for this skill*. Separate from `knowledge.py` on purpose: that one holds the
+target skill's knowledge, and coupling the two would be exactly the mixing
+`agents/meta.md` warns against.
+
+| Subcommand | Purpose |
+|---|---|
+| `add` | New pattern page, or several from the meta agent's output |
+| `evidence` | Appends one experiment's outcome. Called by the orchestrator, not the agent |
+| `update` | Refines a pattern, or marks it `widerlegt` with the contradicting experiment |
+| `index` / `format` | Regenerates `INDEX.md`; renders it into the prompt |
+| `show` | One page verbatim — the on-demand read |
+| `stats` | Counts, including what the index costs in tokens |
+
 ### The six agents
 
 | Agent | Role | Input | Output |
@@ -236,7 +250,7 @@ a list of open questions, and the two fail in different ways.
 | **Hypothesis** | "Scientist", analyzes failures, checks coverage matrix | Grading results, SKILL.md, history, coverage | Testable hypothesis with mutation proposal |
 | **Mutator** | "Surgeon", applies one focused change | Hypothesis, target file | Modified file + documentation |
 | **Scorer** | "Judge", evaluates output quality (Skill Mode) | Eval prompt, output | Normalized quality score (0-1) |
-| **Meta** | "Archivar", distils what kind of edit works for this skill; runs every 5 experiments | history, rejected buffer, kept mutations | `editing-notes.md`, max 8 bullets, each with an experiment id |
+| **Meta** | "Archivist", distils what kind of edit works for this skill; runs every 5 experiments | pattern index, history, rejected buffer, kept mutations | New and refined pattern pages under `patterns/` |
 | **Librarian** | "Librarian", sources the answer to a knowledge gap from supplied material — or reports that it found none | Knowledge gap, inbox, source register, existing claims | Sourced claims with passages, or `resolved: false` |
 | **Orchestrator** | "Conductor", assembles the context for the others, decides the phase, handles handover and checkpoints | history, coverage matrix, checkpoint.json, near-miss hypotheses | Filled agent context, validated agent outputs, loop meta-decisions |
 
@@ -392,7 +406,8 @@ skill-forge/
 ├── scripts/
 │   ├── __init__.py
 │   ├── composite_score.py            # Score, decide, snapshot/revert, TSV, coverage
-│   └── knowledge.py                  # Gap queue and knowledge vault: sources, claims, gates, verify
+│   ├── knowledge.py                  # Gap queue and knowledge vault: sources, claims, gates, verify
+│   └── patterns.py                   # Optimizer-side pattern store: pages, evidence, index
 ├── templates/
 │   ├── morning_report.md             # Report template with coverage matrix
 │   └── agent_context.md              # Runtime context injected into agent prompts
@@ -415,7 +430,8 @@ skill-forge/
 │   ├── test_block4.py                # Token budget, invariants
 │   ├── test_review_findings.py       # Every defect the adversarial review found
 │   ├── test_knowledge.py             # Gap queue, evidence rule, dedupe, DEFERRED
-│   └── test_knowledge_base.py        # The five gates, source register, verify, budgets
+│   ├── test_knowledge_base.py        # The five gates, source register, verify, budgets
+│   └── test_patterns.py              # Pattern store: evidence, support, index economics
 ├── LICENSE                           # MIT
 └── README.md
 ```
@@ -433,7 +449,9 @@ skill-forge/
 ├── knowledge-gaps.jsonl     # Missing facts as questions, append-only
 ├── knowledge-inbox/         # Material supplied by the user
 ├── knowledge-usage.json     # Which run read which claims
-├── editing-notes.md         # Optimizer-side memory, rewritten every 5 experiments
+├── patterns/                # Optimizer-side memory, uncapped
+│   ├── INDEX.md             #   small, permanently in the agent context
+│   └── P-NNNN__slug.md      #   one page per pattern, read on demand
 ├── snapshots/
 │   ├── pre-exp-001/         # State before exp-001, the baseline
 │   │   ├── manifest.json
@@ -567,6 +585,34 @@ reaching the agent, which is a `SKILL_DEFECT`.
 non-KEEP. Counting it would end a run over unanswered questions although no
 hypothesis failed; letting it break the streak would make one question every
 three rounds suppress plateau detection entirely.
+
+### The optimizer's own memory
+
+Until v3 this was a file of eight bullets, rewritten from scratch every five
+experiments. The cap kept the context small; the price was that every insight
+fell out after two rounds at the latest, and at the end of a run nothing
+remained for the next one to build on.
+
+WikiSkill's ablation measures that difference: persistent optimizer-side
+knowledge, refined across iterations, is worth **+15.0 points** on average
+across four benchmarks (48.7% → 63.7%) — the single largest effect in their
+paper.
+
+The store is now uncapped. What makes that affordable is one separation:
+
+> Only `patterns/INDEX.md` sits in the context. A page is read individually,
+> with `patterns.py show`, when its title matches the question.
+
+Twenty patterns cost under 1200 tokens permanently. That puts a demand on the
+meta agent: **the title is the most important line of a page**, because it
+decides whether the page is ever opened.
+
+Two rules keep an uncapped store from turning into noise. **Evidence is
+programmatic, interpretation is the agent's** — the orchestrator appends the
+outcome from `decision.json`, since an agent that writes its own support count
+is citing itself. And **mistakes stay readable**: a pattern contradicted by a
+later experiment is marked `widerlegt` with the experiment that did it, not
+deleted, so the same wrong turn is not rediscovered three rounds later.
 
 ### Two tracks
 
@@ -744,8 +790,8 @@ file against a baseline it no longer matches.
 | `invariant_command` | null | Must still exit 0 after every mutation |
 | `min_scope_ratio` | 0.9 | Floor against "measuring less is not an improvement" |
 | `max_scope_files` | 200 | Upper bound on the scope glob |
-| `meta_memory_interval` | 5 | How often `editing-notes.md` is rewritten |
-| `meta_memory_max_bullets` | 8 | Cap on the meta notes |
+| `meta_memory_interval` | 5 | How often the meta agent runs |
+| `pattern_min_support` | 2 | Measured evidence rows before a pattern stops being `vorläufig` |
 | `max_knowledge_gaps_per_experiment` | 1 | How many knowledge gaps one round may report |
 | `max_deferred_per_run` | 3 | How often a run may answer with a question instead of a mutation before `knowledge` is deprioritized |
 | `gap_limit` | 10 | How many open questions go into the agent prompt |
@@ -760,7 +806,7 @@ file against a baseline it no longer matches.
 python3 -m pytest tests/ -q
 ```
 
-369 tests across twelve files. They cover the decision cascade and its threshold edge cases,
+394 tests across thirteen files. They cover the decision cascade and its threshold edge cases,
 gate scoring and `--side`, the three-way split, diff and comparison, protected regions and
 the appendix, the rejected buffer, the token budget, the invariant checks, generic mode,
 and every CLI exit code, plus the knowledge-gap queue, the `DEFERRED` path, and the five gates guarding the vault.

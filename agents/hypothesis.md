@@ -27,6 +27,7 @@ das Optimierungsziel suboptimal performt — und wie eine gezielte Änderung das
   "coverage_matrix": {"categories": {...}, "coverage_summary": {...}},
   "near_misses": [{"experiment": "exp-004", "category": "workflow", "delta": 0.01, "hypothesis": "..."}],
   "dynamic_context": "Gefülltes agent_context.md Template",
+  "pattern_index": "Ausgabe von patterns.py format — nur der Index",
   "transcripts_dir": "/path/to/transcripts",
   "command_output": "letzter Shell-Output"
 }
@@ -58,6 +59,7 @@ Zum Typ: `best_delta` und `delta` sind hier Zahlen. In der
   "coverage_rationale": "string",
   "previously_tried": false,
   "builds_on_near_miss": "hyp-NNN | null",
+  "builds_on_pattern": "P-NNNN | null",
   "confidence": "high | medium | low",
 
   "failure_summary": [
@@ -104,6 +106,13 @@ Du erhältst:
 - **coverage_matrix**: Welche Bereiche wie oft getestet wurden (siehe unten)
 - **near_misses**: Liste von Near-Miss Experimenten (knapp am Threshold gescheitert)
 - **dynamic_context**: Laufzeit-Kontext mit Phase, Trend, Coverage-Überblick
+- **pattern_index**: Muster des Optimierers — was bei **diesem** Skill bisher
+  genommen hat und was nicht. Nur die Indextabelle; eine Seite liest du mit
+  `python3 scripts/patterns.py show <workspace> P-NNNN`, wenn ihr Titel zur
+  Frage passt. Vorrangregel: bevorzugen, wenn die aktuelle Evidenz mehrdeutig
+  ist; ignorieren, wenn die Ergebnisse klar widersprechen. Ein Muster mit dem
+  Status `vorläufig` hat weniger als zwei gemessene Belege und trägt
+  entsprechend wenig
 - **transcripts_dir** (Skill-Modus): Verzeichnis mit Execution-Transcripts der Runs
 - **command_output** (Generic-Modus): Letzter Output des Metrik-Commands
 
@@ -451,9 +460,15 @@ Beschreibe konkret, was geändert werden soll:
   "coverage_rationale": "Kategorie 'workflow' hat 1 Experiment (KEEP), 'edge_cases' hat 0 — aber der erwartete Impact auf workflow ist hier höher",
   "previously_tried": false,
   "builds_on_near_miss": null,
+  "builds_on_pattern": "P-0001",
   "confidence": "high"
 }
 ```
+
+`builds_on_pattern` nennt das Muster aus dem Index, das diese Hypothese
+aufgegriffen hat, oder `null`. Der Orchestrator hängt das Ergebnis der Runde
+als Evidenz an genau dieses Muster — ohne das Feld sammelt der Musterbestand
+keine Belege und bleibt für immer vorläufig.
 
 ## Richtlinien
 
@@ -462,6 +477,10 @@ Beschreibe konkret, was geändert werden soll:
 - **Erkläre das Warum.** Nicht "füge ALWAYS ADD VALIDATION hinzu" sondern erkläre warum
   Validation wichtig ist, damit der Agent das Prinzip versteht.
 - **Denke an Nebenwirkungen.** Jede Änderung kann andere Bereiche beeinflussen.
+- **Nutze die Muster.** Bevor du einen Mutationstyp wählst: sagt der
+  Musterindex etwas über diesen Typ bei diesem Skill? Genau dafür ist er da.
+  Ein `widerlegt`-Muster ist auch eine Information — dort wurde etwas geprüft
+  und verworfen.
 - **Variiere den Ansatz.** Wenn Prosa-Änderungen nicht helfen, versuche Scripts.
   Wenn Scripts nicht helfen, versuche Beispiele. Wenn Beispiele nicht helfen,
   versuche Strukturänderungen.

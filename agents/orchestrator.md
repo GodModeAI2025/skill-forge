@@ -34,7 +34,17 @@ Vor jedem Agent-Aufruf:
    Der Index ist klein und dafür gebaut, permanent im Kontext zu liegen.
 7. Lege die Bestandsnutzung bei:
    `python3 scripts/knowledge.py usage-format <workspace>/knowledge-usage.json`
-8. Hänge den gefüllten Context an den Agent-Prompt an
+8. Lege den Musterindex bei:
+   `python3 scripts/patterns.py format <workspace>`
+   **Nur den Index, nie die Seiten.** Das ist die Trennung, die einen
+   unbegrenzten Musterbestand bezahlbar macht: permanent kostet die
+   Indextabelle, eine Seite liest der Agent selbst mit `patterns.py show`,
+   wenn ihr Titel zur Frage passt. Wer hier alle Seiten einhängt, hat den
+   Achter-Deckel durch etwas Teureres ersetzt.
+   Der Block geht an Hypothesis und Meta, **nicht** an den Mutator: der
+   Bestand ist optimiererseitig, und der Mutator schreibt in die
+   Ziel-SKILL.md.
+9. Hänge den gefüllten Context an den Agent-Prompt an
 
 ### 2. Agent-Übergabe-Protokoll
 
@@ -109,6 +119,7 @@ Felder, der Code fällt in einen unbenannten Default, und der Lauf meldet Erfolg
 ohne Wirkung.
 
 **Hypothesis-Output:**
+- `builds_on_pattern` ist eine bekannte Muster-ID aus dem Index oder `null`
 - Antwort ist ein JSON-Objekt
 - `candidates` ist eine Liste der Länge 3
 - `selected_index` ist eine Ganzzahl im Bereich `0 <= i < len(candidates)`
@@ -336,10 +347,41 @@ Baseline-Stand oder eine Mutation, über die nie entschieden wurde? Steht das Fl
 Resume auf true, wird zuerst auf `on_disk_version` zurückgerollt und das Experiment neu
 aufgesetzt.
 
+### 4.8. Evidenz an die Muster hängen
+
+Nach jeder Entscheidung, sobald `decision.json` steht: Wenn die Hypothese ein
+Muster aus dem Index aufgegriffen hat (Feld `builds_on_pattern` in
+`hypothesis.json`), hänge das Ergebnis an dieses Muster:
+
+```bash
+python3 scripts/patterns.py evidence <workspace> P-<NNNN> \
+  --experiment exp-<NNN> --decision <KEEP|REVERT|NEUTRAL|...> \
+  --delta <delta aus decision.json> --mutation-type <typ>
+```
+
+**Das macht der Orchestrator, nicht der Meta-Agent.** Ein Agent, der seine
+eigene Belegzahl schreibt, belegt sich selbst; der objektive Teil kommt aus
+`decision.json`, die Deutung aus dem Meta-Agenten. Dieselbe Trennung wie bei
+WikiSkills `skill-impact.md`, das die Harness schreibt und nicht der Proposer.
+
+Der Aufruf ist über die Experiment-ID idempotent: ein Resume, das dasselbe
+Experiment erneut verbucht, verdoppelt den Beleg nicht.
+
 ### 5.5. Meta-Memory
 
 Alle 5 Experimente, aber nur wenn mindestens drei davon KEEP oder REVERT tragen:
-rufe `agents/meta.md` auf und schreibe `<workspace>/editing-notes.md` neu.
+rufe `agents/meta.md` auf und übernimm seine Ausgabe in den Musterbestand.
+
+```bash
+python3 scripts/patterns.py add <workspace> \
+  --from-json <workspace>/meta-<NNN>.json --title x --observation y --consequence z
+```
+
+Der Befehl liest den Block `patterns`; die Platzhalter-Argumente sind dann
+unbenutzt. Für jeden Eintrag in `updates` folgt ein `patterns.py update`.
+Exit 2 heisst: kein Muster kam durch, `skipped` sagt warum — meist ein
+doppelter Titel, und dann gehört die Erkenntnis als `update` an die bestehende
+Seite statt als zweite daneben.
 
 Zwei Reihenfolge-Bedingungen, beide nicht verhandelbar:
 

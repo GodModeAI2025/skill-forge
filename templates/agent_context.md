@@ -63,6 +63,16 @@ Diese Lücken sind bereits gemeldet. Keine davon erneut stellen. Steht eine Frag
 auf `answered` oder `sourced` und das Fehlermuster tritt trotzdem wieder auf,
 fehlt nicht das Wissen, sondern der Verweis darauf — das ist ein `SKILL_DEFECT`.
 
+## Muster des Optimierers
+
+{pattern_index_block}
+
+Gerendert mit `patterns.py format <workspace>`. Nur der Index liegt hier; eine
+Seite liest du einzeln mit `patterns.py show <workspace> P-NNNN`, wenn ihr
+Titel zur aktuellen Frage passt. Bevorzuge diese Muster, wenn die aktuelle
+Evidenz mehrdeutig ist; ignoriere sie, wenn die Ergebnisse ihnen klar
+widersprechen.
+
 ## Bestätigte Muster
 
 {success_patterns}

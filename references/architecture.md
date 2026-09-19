@@ -66,7 +66,9 @@ Constraint + mechanische Metrik + autonome Iteration = kumulativer Gewinn.
 ├── experiment-log.tsv         # Flaches Log (TSV, eine Zeile pro Experiment)
 ├── coverage-matrix.json       # Experiment-Abdeckung pro Kategorie
 ├── rejected.jsonl             # Nicht-KEEP im Wortlaut, kompaktierungsfest
-├── editing-notes.md           # Meta-Memory, alle 5 Experimente
+├── patterns/                  # Meta-Memory als Musterbestand, unbegrenzt
+│   ├── INDEX.md               #   permanent im Kontext
+│   └── P-NNNN__slug.md        #   auf Abruf gelesen
 ├── checkpoint.json            # Resume-Point (siehe Checkpoint/Resume System)
 ├── snapshots/
 │   ├── pre-exp-001/           # Zustand VOR Experiment 1, also die Baseline
@@ -599,7 +601,7 @@ Bundle-Size, Features rauszuwerfen. Der Exit-Code fängt nichts davon ab, bei
 
 ### Meta-Memory
 
-`<workspace>/editing-notes.md`, geschrieben von `agents/meta.md`, alle 5
+`<workspace>/patterns/`, geschrieben von `agents/meta.md`, alle 5
 Experimente und nur wenn mindestens drei davon KEEP oder REVERT tragen.
 
 Der Inhalt ist optimizer-seitig und landet nie in der Ziel-SKILL.md. SkillOpts

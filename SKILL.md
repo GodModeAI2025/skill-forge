@@ -407,7 +407,9 @@ Nach Bestätigung:
 ├── knowledge-gaps.jsonl    # Erkannte Wissenslücken als Fragen, append-only
 ├── knowledge-inbox/        # Vom User bereitgestelltes Rohmaterial
 ├── knowledge-usage.json    # Welcher Run welche Claims gelesen hat
-├── editing-notes.md        # Meta-Memory des Optimierers, alle 5 Experimente
+├── patterns/               # Meta-Memory: Muster des Optimierers, unbegrenzt
+│   ├── INDEX.md            #   klein, liegt permanent im Agent-Kontext
+│   └── P-NNNN__slug.md     #   eine Seite je Muster, auf Abruf gelesen
 ├── checkpoint.json         # Resume-Point für Session-Übergreifendes Fortsetzen
 ├── experiment-log.tsv      # Flaches Log für schnelles Monitoring
 ├── coverage-matrix.json    # Experiment-Abdeckung
@@ -546,6 +548,11 @@ Vor jedem Agent-Aufruf wird der Agent-Prompt dynamisch angereichert:
    - Der Block aus
      `python3 scripts/knowledge.py usage-format <workspace>/knowledge-usage.json`,
      also welcher Run welche Claims gelesen hat.
+   - Der Block aus `python3 scripts/patterns.py format <workspace>`, also der
+     Musterindex des Optimierers. **Nur der Index, nie die Seiten** — sonst ist
+     der unbegrenzte Bestand genau das Kontextproblem, gegen das der alte
+     Achter-Deckel gebaut war. Geht an Hypothesis und Meta, nicht an den
+     Mutator.
 3. Hänge den gefüllten Context an den jeweiligen Agent-Prompt an
 4. Context-Budget-Regel: Max 30% des Agent-Contexts für History, Coverage,
    Meta-Notizen und den Rejected-Block. 70% für die aktuelle Aufgabe.
@@ -1077,7 +1084,8 @@ Im Guided-Modus: Zeige dem User den bisherigen Fortschritt (Score-Verlauf, Cover
 
 ### Schritt 6.5: Meta-Memory (alle 5 Experimente)
 
-Lies `agents/meta.md` und schreibe `<workspace>/editing-notes.md` neu.
+Lies `agents/meta.md` und übernimm seine Ausgabe in den Musterbestand unter
+`<workspace>/patterns/`.
 
 Läuft nur, wenn mindestens drei der bisherigen Experimente eine Entscheidung
 KEEP oder REVERT tragen. Reine NEUTRAL-Serien liefern kein Material.
@@ -1096,10 +1104,48 @@ diesem Skill genommen haben, auf welcher Formulierungsebene Änderungen gewirkt
 haben, welche Kategorien Regressionen erzeugt haben. Keine Anweisungen, die im
 Ziel-Skill stehen könnten.
 
-Eingehängt wird die Datei in Schritt 0.8 mit der Vorrangregel:
+```bash
+python3 scripts/patterns.py add <workspace> --from-json <meta-ausgabe.json> \
+  --title x --observation y --consequence z     # liest den Block patterns
+python3 scripts/patterns.py update <workspace> P-0002 --consequence "..."
+```
 
-> Bevorzuge diese Notizen, wenn die aktuelle Evidenz mehrdeutig ist. Ignoriere
+**Der Bestand ist unbegrenzt, der Index nicht teuer.** Bis v3 war das Gedächtnis
+eine Datei mit acht Bullets, bei jedem Lauf neu geschrieben. Der Deckel hielt
+den Kontext klein; der Preis war, dass jede Erkenntnis nach spätestens zwei
+Runden herausfiel und am Ende eines Laufs nichts blieb, worauf der nächste
+aufbauen konnte. Bezahlbar wird die Persistenz durch die Trennung:
+
+> Nur `patterns/INDEX.md` liegt permanent im Kontext. Eine Seite liest der
+> Agent selbst mit `patterns.py show`, wenn ihr Titel zur Frage passt.
+
+Zwanzig Muster kosten damit unter 1200 Token dauerhaft. Daraus folgt eine
+Anforderung an den Meta-Agenten: **der Titel ist die wichtigste Zeile einer
+Seite**, denn er entscheidet, ob sie je geöffnet wird.
+
+Anlass ist WikiSkill (arXiv:2608.27454, Tang et al.). Deren Ablation misst für
+persistentes, über Iterationen verdichtetes Optimierer-Wissen **+15,0 Punkte**
+im Schnitt über vier Benchmarks (48,7 % auf 63,7 %) — den grössten
+Einzeleffekt der Arbeit.
+
+**Evidenz schreibt der Orchestrator, nicht der Agent** (`agents/orchestrator.md`
+Abschnitt 4.8). Der objektive Teil kommt aus `decision.json`, die Deutung aus
+dem Meta-Agenten. Ein Agent, der seine eigene Belegzahl schreibt, belegt sich
+selbst.
+
+**Irrtümer bleiben stehen.** Widerspricht ein Experiment einem Muster, wird es
+`widerlegt` mit Angabe des widersprechenden Experiments — nicht gelöscht. Es
+bleibt lesbar, damit derselbe Irrtum nicht in drei Runden neu entdeckt wird,
+derselbe Gedanke wie bei `rejected.jsonl`.
+
+Eingehängt wird der Index in Schritt 0.8 mit der Vorrangregel:
+
+> Bevorzuge diese Muster, wenn die aktuelle Evidenz mehrdeutig ist. Ignoriere
 > sie, wenn die aktuellen Ergebnisse ihnen klar widersprechen.
+
+Ältere Workspaces tragen noch `editing-notes.md`. Der Meta-Agent liest sie
+einmal als Ausgangsmaterial — jeder Bullet mit Experiment-ID wird eine
+Musterseite — und schreibt sie danach nicht mehr fort.
 
 ### Schritt 7: Report generieren
 
@@ -1264,8 +1310,8 @@ Standardwerte, die der User überschreiben kann:
 | `invariant_command` | null | Muss nach jeder Mutation mit Exit 0 durchlaufen |
 | `min_scope_ratio` | 0.9 | Untergrenze gegen "weniger messen ist keine Verbesserung" |
 | `max_scope_files` | 200 | Obergrenze für den Scope-Glob |
-| `meta_memory_interval` | 5 | Wie oft `editing-notes.md` neu geschrieben wird |
-| `meta_memory_max_bullets` | 8 | Deckel für die Meta-Notizen |
+| `meta_memory_interval` | 5 | Wie oft der Meta-Agent läuft |
+| `pattern_min_support` | 2 | Ab wie vielen gemessenen Belegen ein Muster nicht mehr `vorläufig` heisst |
 
 ---
 
@@ -1757,6 +1803,7 @@ Diese sind optional und nicht erforderlich für den normalen Betrieb.
 python3 -m pytest tests/ -q
 python3 scripts/composite_score.py --version
 python3 scripts/knowledge.py --version
+python3 scripts/patterns.py --version
 python3 scripts/knowledge.py verify <ziel-SKILL.md>   # wenn ein Bestand existiert
 ```
 
@@ -1774,6 +1821,7 @@ vorher aus.
 | `agents/hypothesis.md` | Hypothesenbildung aus Eval-Failures + Coverage-Matrix + Near-Misses |
 | `agents/mutator.md` | Mutation mit Begründung (Skill + Generic) |
 | `agents/meta.md` | Meta-Memory über Edit-Qualität, alle 5 Experimente |
+| `scripts/patterns.py` | Musterbestand des Optimierers: anlegen, verfeinern, Evidenz anhängen, indizieren |
 | `agents/scorer.md` | LLM-as-Judge Bewertung (nur Skill-Modus) |
 | `PLAN-wissen-v1.md` | Plan für Wissenserkennung, -beschaffung und -pflege; Phase 1 ist umgesetzt |
 | `scripts/composite_score.py` | Scoring, Entscheidung (`decide`), Snapshot/Revert, TSV-Logging, History-Compaction, Checkpoint, Grouping |
