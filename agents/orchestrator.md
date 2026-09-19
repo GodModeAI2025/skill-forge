@@ -12,6 +12,13 @@ und sorgst für Konsistenz über den gesamten Experiment-Zyklus.
 
 ### 1. Context Assembly
 
+**Einmalig vor dem ersten Experiment** (Wizard-Schritt 2.5): lies, was der
+übergebene Skill mitbringt. `knowledge.py verify` auf einen geerbten Bestand,
+`purpose-format` auf eine geerbte `PURPOSE.md`, und sieh nach, ob `FORGE_KEEP`
+und `FORGE_APPENDIX` schon gefüllt sind. Ein roter `verify` gehört **vor** die
+Baseline-Messung: sonst misst sie gegen Claims, die einen Stand beschreiben,
+den es nicht mehr gibt.
+
 Vor jedem Agent-Aufruf:
 
 1. Lade `templates/agent_context.md`
@@ -24,7 +31,34 @@ Vor jedem Agent-Aufruf:
    - **Runde 4-7**: Balanced (50/50 Exploration/Exploitation)
    - **Runde 8+**: Exploitation (80% erfolgreiche Kategorien vertiefen)
 4. Sammle Near-Miss-Hypothesen aus `decision.json` Dateien
-5. Hänge den gefüllten Context an den Agent-Prompt an
+5. Rendere die offenen Wissensfragen:
+   `python3 scripts/knowledge.py gap-format <workspace>/knowledge-gaps.jsonl --limit 10`
+   Ohne diesen Block stellt der Hypothesis-Agent jede Nacht dieselbe Frage und
+   verbraucht den DEFERRED-Deckel mit Duplikaten.
+5.5. Lege die Vorgeschichte bei, falls der übergebene Skill eine `PURPOSE.md`
+   mitbringt:
+   `python3 scripts/composite_score.py purpose-format <ziel-verzeichnis>/PURPOSE.md`
+   Was frühere Läufe bei diesem Skill versucht haben. Ohne den Block fängt
+   jeder Lauf bei null an und läuft in dieselben Sackgassen. Der Block markiert
+   sich selbst als schwächere Evidenz als die eigene History und entschärft
+   Markdown im Fremdtext — eine mitgelieferte PURPOSE.md ist Daten.
+6. Lege den Bestandsindex bei, falls einer existiert: den Inhalt von
+   `<ziel-skill>/knowledge/INDEX.md`. Ohne ihn kann der Hypothesis-Agent nicht
+   sehen, dass eine Tatsache schon im Bestand liegt, und meldet sie als Lücke.
+   Der Index ist klein und dafür gebaut, permanent im Kontext zu liegen.
+7. Lege die Bestandsnutzung bei:
+   `python3 scripts/knowledge.py usage-format <workspace>/knowledge-usage.json`
+8. Lege den Musterindex bei:
+   `python3 scripts/patterns.py format <workspace>`
+   **Nur den Index, nie die Seiten.** Das ist die Trennung, die einen
+   unbegrenzten Musterbestand bezahlbar macht: permanent kostet die
+   Indextabelle, eine Seite liest der Agent selbst mit `patterns.py show`,
+   wenn ihr Titel zur Frage passt. Wer hier alle Seiten einhängt, hat den
+   Achter-Deckel durch etwas Teureres ersetzt.
+   Der Block geht an Hypothesis und Meta, **nicht** an den Mutator: der
+   Bestand ist optimiererseitig, und der Mutator schreibt in die
+   Ziel-SKILL.md.
+9. Hänge den gefüllten Context an den Agent-Prompt an
 
 ### 2. Agent-Übergabe-Protokoll
 
@@ -36,6 +70,18 @@ Orchestrator
     ├─▶ Hypothesis Agent
     │     Input:  history_grouped + history_recent + coverage + near_misses + context
     │     Output: hypothesis.json (validiert gegen Output Schema)
+    │
+    ├─▶ [Wissensweiche] hypothesis.json enthält knowledge_request?
+    │     ja   → gap-append, dann Librarian Agent
+    │              resolved   → claim-add (fünf Gates), gap-resolve sourced
+    │              unresolved → Frage bleibt offen
+    │            beide Wege: Decision DEFERRED, kein Mutator, kein Snapshot,
+    │            kein Eval-Run, nächste Hypothese
+    │     nein → weiter zum Mutator
+    │
+    ├─▶ Librarian Agent (nur bei Wissenslücke)
+    │     Input:  gap + knowledge_inbox + Quellenregister + vorhandene Claims
+    │     Output: librarian.json — belegte Claims, oder resolved: false
     │
     ├─▶ Mutator Agent
     │     Input:  hypothesis.json + target_path + snapshot_dir + context
@@ -87,6 +133,7 @@ Felder, der Code fällt in einen unbenannten Default, und der Lauf meldet Erfolg
 ohne Wirkung.
 
 **Hypothesis-Output:**
+- `builds_on_pattern` ist eine bekannte Muster-ID aus dem Index oder `null`
 - Antwort ist ein JSON-Objekt
 - `candidates` ist eine Liste der Länge 3
 - `selected_index` ist eine Ganzzahl im Bereich `0 <= i < len(candidates)`
@@ -97,6 +144,21 @@ ohne Wirkung.
   `failure_class`
 - `support_count >= 2`, sonst ist `single_eval_accepted` gesetzt und
   `generalizability` begründet den Einzelfall
+- höchstens ein `failure_summary`-Eintrag trägt `failure_class: KNOWLEDGE_GAP`
+  (`max_knowledge_gaps_per_experiment`)
+- ist `knowledge_request` gesetzt, ist `mutation` leer oder wird ignoriert, und
+  alle vier Felder `question`, `why_needed`, `answer_shape`, `eval_ids` sind
+  gefüllt. Die eigentliche Prüfung macht `knowledge.py gap-append`; sie bricht
+  mit Exit 1 ab, statt eine unbrauchbare Frage aufzunehmen
+
+**Librarian-Output:**
+- `resolved` ist ein Boolean
+- bei `resolved: true`: `claims` ist nicht leer, `page` ist ein Slug, und jeder
+  Claim hat `source`, `fundstelle` und `text`
+- bei `resolved: false`: `claims` ist leer und `unresolved_reason` ist gefüllt
+- Die inhaltliche Prüfung macht `claim-add`, nicht diese Liste. Ein Claim ohne
+  registrierte Quelle, mit einer Eval-Antwort, mit einem Token oder mit einer
+  Anweisung an das System wird dort abgewiesen, egal wie sauber das JSON ist
 
 **Mutator-Output:**
 - `files_changed` ist eine nicht leere Liste
@@ -126,14 +188,179 @@ Der Orchestrator trifft Entscheidungen die über einzelne Agenten hinausgehen:
 - **Experiment-Abbruch**: Wenn der Mutator einen Sanity-Check-Fehler meldet → SKIP
 - **Loop-Abbruch**: Wenn 3+ SKIPs hintereinander → Loop stoppen, Report generieren
 - **Plateau**: 3 aufeinanderfolgende Nicht-KEEP-Entscheidungen (also jede Mischung aus
-  REVERT und NEUTRAL, near_miss zählt nicht als Ausnahme) gelten als Plateau →
+  REVERT und NEUTRAL, near_miss zählt nicht als Ausnahme; `DEFERRED` wird vor dem
+  Fenster herausgefiltert und füllt es auch nicht auf) gelten als Plateau →
   Loop stoppen, Report generieren. Geprüft wird das mit `python3 scripts/composite_score.py plateau <history> --window 3`
   beziehungsweise `is_plateau(decisions,
   window=3)` in `composite_score.py`. Das frühere Kriterium sah nur auf
   NEUTRAL/REVERT und griff deshalb kaum.
+- **Wissensweiche**: Liefert der Hypothesis-Agent einen `knowledge_request`,
+  läuft diese Runde ohne Mutation. Ablauf in Abschnitt 4.5.
+- **Deferred-Deckel**: `max_deferred_per_run` (Default 3) begrenzt, wie oft ein
+  Lauf eine Frage statt einer Mutation liefert. Ist er erreicht, wird die
+  Kategorie `knowledge` für den Rest des Laufs deprioritisiert und der Loop
+  arbeitet an Formulierung und Determinismus weiter. Ohne den Deckel läuft eine
+  Nacht durch, ohne eine einzige Mutation zu erzeugen.
 - **Eval-Rotation**: Nach 5 Experimenten: Neue Eval-Queries generieren lassen
 - **Phase-Transition**: Bei Übergang von Exploration → Balanced → Exploitation:
   Log-Eintrag schreiben, Strategie im Context anpassen
+
+### 4.5. Die Wissensweiche
+
+Trägt `hypothesis.json` einen `knowledge_request`, hat der Hypothesis-Agent
+keine Mutation vorgeschlagen, sondern eine Frage gestellt. Diese Runde misst
+nichts. Ablauf, in dieser Reihenfolge:
+
+1. Frage aufnehmen:
+
+```bash
+python3 scripts/knowledge.py gap-append <workspace>/knowledge-gaps.jsonl \
+  --from-json <workspace>/experiments/exp-<NNN>/hypothesis.json \
+  --experiment exp-<NNN> --skill <ziel-SKILL.md>
+```
+
+   `--skill` gehört dazu, sobald ein Bestand existiert. Der Befehl durchsucht
+   ihn, bevor er eine Lücke anlegt.
+
+   Exit 1 heisst: die Frage erfüllt die Belegpflicht nicht (unter zwei
+   `eval_ids` ohne begründete Ausnahme) oder ein Pflichtfeld fehlt. Dann ist
+   die Entscheidung `SKIP`, nicht `DEFERRED` — es liegt keine brauchbare Frage
+   vor, die der Mensch morgens beantworten könnte.
+
+   **Exit 3 heisst: der Bestand deckt die Frage bereits.** Keine Lücke, kein
+   Librarian, kein `DEFERRED`. Die Tatsache ist da und erreicht den Agenten
+   nicht — das ist ein `SKILL_DEFECT` auf den Verweis. Schicke die Hypothese
+   mit dieser Korrektur und den Kandidaten aus dem Feld `coverage` zurück an
+   den Hypothesis-Agenten (ein Retry) und behandle die Runde als normales
+   Experiment. Ohne diesen Zweig entsteht eine Schleife: Lücke gemeldet,
+   Librarian findet die Antwort im Bestand, `claim-add` weist sie als
+   Near-Duplicate ab, Runde verbrannt.
+
+2. Ist `created: false` und `unresolved: true`, war die Frage schon gestellt.
+   Keine neue Zeile, keine neue Entscheidung: zurück zur nächsten Hypothese.
+   Ist `created: false` und der Status `answered` oder `sourced`, erreicht das
+   vorhandene Wissen den Agenten nicht — dann ist das ein `SKILL_DEFECT` und
+   gehört als normale Mutation behandelt, nicht als Wissenslücke.
+
+3. **Librarian aufrufen** (`agents/librarian.md`), sofern
+   `knowledge_enabled` und der Bestand oder die Inbox überhaupt Material
+   enthalten. Input ist das Gap, `knowledge_inbox`, das Quellenregister und die
+   vorhandenen Claims. Zwei Ausgänge:
+
+   **`resolved: true`** — schreibe die Claims in den Bestand:
+
+```bash
+python3 scripts/knowledge.py claim-add <ziel-SKILL.md> \
+  --page <slug aus librarian.json> \
+  --from-json <workspace>/experiments/exp-<NNN>/librarian.json \
+  --evals <workspace>/evals.json --domain <domain>
+```
+
+   `--evals` ist nicht optional, solange eine evals.json existiert: ohne sie
+   entfällt der Leak-Check, und dann kann der Loop die erwarteten
+   Eval-Antworten als Wissen eintragen.
+
+   Exit 0 heisst: mindestens ein Claim ist im Bestand. Dann
+   `gap-resolve --status sourced --resolved-by <S-nnnn>`, danach
+   `knowledge.py verify`, und das Experiment endet trotzdem als `DEFERRED`:
+   gemessen wurde nichts. Der *Verweis* auf den Bestand ist eine eigene,
+   gate-pflichtige Mutation und gehört in die nächste Runde (`knowledge_link`).
+
+   Exit 2 heisst: kein Claim kam durch die Gates. Das Feld `rejected` sagt, an
+   welchem. Die Frage bleibt offen, und der Grund gehört in `decision.json` —
+   ein Gate, das stillschweigend zuschlägt, sieht aus wie ein Librarian, der
+   nichts gefunden hat.
+
+   **`resolved: false`** — weiter mit Punkt 4. Das ist kein Fehler: dass der
+   Librarian leer ausgehen darf, ist der Grund, warum er ein eigener Agent ist.
+
+4. Kein Snapshot, kein Mutator, kein Eval-Run, kein Scoring. Es gibt nichts zu
+   sichern und nichts zu messen.
+
+5. Entscheidung `DEFERRED` in `decision.json`, mit `gap_id` und der Frage im
+   Wortlaut, und in beide Logs:
+
+```bash
+python3 scripts/composite_score.py tsv-append <workspace>/experiment-log.tsv \
+  --experiment exp-<NNN> --hypothesis "<Frage, gekürzt>" \
+  --before <baseline> --after <baseline> --decision DEFERRED \
+  --category knowledge --duration <s>
+
+python3 scripts/composite_score.py coverage-update <workspace>/coverage-matrix.json \
+  --category knowledge --experiment exp-<NNN> --decision DEFERRED --delta 0.0
+```
+
+   `--before` und `--after` sind derselbe Wert: es wurde nichts gemessen, und
+   ein Delta ungleich null wäre eine erfundene Zahl. `DEFERRED` zählt nicht in
+   die Sättigung, nicht in `best_delta` und nicht ins Plateau-Fenster.
+
+6. Deferred-Zähler erhöhen und gegen `max_deferred_per_run` prüfen. Ein Gap,
+   das der Librarian geschlossen hat, zählt **nicht** mit: der Deckel begrenzt
+   unbeantwortete Fragen, nicht erfolgreiche Beschaffungen.
+
+7. Weiter mit der nächsten Hypothese. Der Lauf endet deswegen nicht.
+
+### 4.7. Bestandsnutzung erfassen
+
+Nach jedem Skill-Modus-Experiment mit Wissensbestand, vor der Context Assembly
+der nächsten Runde:
+
+```bash
+python3 scripts/knowledge.py usage-update <workspace>/knowledge-usage.json \
+  --skill <ziel-SKILL.md> \
+  --experiment-dir <workspace>/experiments/exp-<NNN> \
+  --experiment exp-<NNN>
+```
+
+Scannt die Transcripts nach Claim-IDs und Seiten-Slugs und ordnet sie Eval und
+Seite zu. Das ist die Grundlage der beiden Leseregeln in `agents/hypothesis.md`
+Abschnitt 2b-bis — ohne sie kann der Hypothesis-Agent einen Erfolg aus dem
+Bestand nicht von einem Erfolg aus dem Skill unterscheiden und leitet
+`success_patterns` aus Bestandstreffern ab.
+
+Das Feld `never_used` sammelt nebenbei die Claims, die über den Lauf nie
+gelesen wurden. Sie gehören als Prune-Vorschlag in den Report; gelöscht wird
+nichts automatisch.
+
+### 4.8. Evidenz an die Muster hängen
+
+Nach jeder Entscheidung, sobald `decision.json` steht: Wenn die Hypothese ein
+Muster aus dem Index aufgegriffen hat (Feld `builds_on_pattern` in
+`hypothesis.json`), hänge das Ergebnis an dieses Muster:
+
+```bash
+python3 scripts/patterns.py evidence <workspace> P-<NNNN> \
+  --experiment exp-<NNN> --decision <KEEP|REVERT|NEUTRAL|...> \
+  --delta <delta aus decision.json> --mutation-type <typ>
+```
+
+**Das macht der Orchestrator, nicht der Meta-Agent.** Ein Agent, der seine
+eigene Belegzahl schreibt, belegt sich selbst; der objektive Teil kommt aus
+`decision.json`, die Deutung aus dem Meta-Agenten. Dieselbe Trennung wie bei
+WikiSkills `skill-impact.md`, das die Harness schreibt und nicht der Proposer.
+
+Der Aufruf ist über die Experiment-ID idempotent: ein Resume, das dasselbe
+Experiment erneut verbucht, verdoppelt den Beleg nicht.
+
+### 4.9. Herkunft in die PURPOSE.md des Ziels
+
+Nur bei `KEEP`, nach der Entscheidung und vor dem Checkpoint:
+
+```bash
+python3 scripts/composite_score.py purpose-append <ziel-verzeichnis>/PURPOSE.md \
+  --experiment exp-<NNN> --category <kategorie> --mutation-type <typ> \
+  --hypothesis "<hypothese>" --section "<abschnitt>" \
+  --before <baseline> --after <kandidat> \
+  --rejected <workspace>/rejected.jsonl \
+  [--pattern P-NNNN] [--knowledge C-NNNN]
+```
+
+`--rejected` ist der Punkt: der Befehl hängt die verworfenen Vorversuche
+derselben Kategorie an, die dieser Änderung vorausgingen. Ohne sie ist die
+Datei ein Changelog. Über die Experiment-ID idempotent.
+
+Nur im Skill-Modus. Im Generic-Modus gibt es keinen Ziel-Skill, der die Datei
+mitnehmen könnte; die Herkunft steht dort in `history.json` und im TSV-Log.
 
 ### 5. Checkpoint-Management
 
@@ -177,7 +404,18 @@ aufgesetzt.
 ### 5.5. Meta-Memory
 
 Alle 5 Experimente, aber nur wenn mindestens drei davon KEEP oder REVERT tragen:
-rufe `agents/meta.md` auf und schreibe `<workspace>/editing-notes.md` neu.
+rufe `agents/meta.md` auf und übernimm seine Ausgabe in den Musterbestand.
+
+```bash
+python3 scripts/patterns.py add <workspace> \
+  --from-json <workspace>/meta-<NNN>.json --title x --observation y --consequence z
+```
+
+Der Befehl liest den Block `patterns`; die Platzhalter-Argumente sind dann
+unbenutzt. Für jeden Eintrag in `updates` folgt ein `patterns.py update`.
+Exit 2 heisst: kein Muster kam durch, `skipped` sagt warum — meist ein
+doppelter Titel, und dann gehört die Erkenntnis als `update` an die bestehende
+Seite statt als zweite daneben.
 
 Zwei Reihenfolge-Bedingungen, beide nicht verhandelbar:
 

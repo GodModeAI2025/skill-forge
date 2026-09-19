@@ -447,7 +447,18 @@ def min_detectable_delta(total_assertions: int, flips: int = 2) -> float:
 # ─── Entscheidung ─────────────────────────────────────────────────────────
 
 
-DECISIONS = ("KEEP", "REVERT", "NEUTRAL", "SKIP", "NO_OP", "INVALID")
+DECISIONS = (
+    "KEEP", "REVERT", "NEUTRAL", "SKIP", "NO_OP", "INVALID", "DEFERRED",
+)
+
+# Entscheidungen, die aus einer Messung stammen. Nur sie zählen in die
+# Sättigung einer Kategorie und in best_delta.
+MEASURED_DECISIONS = ("KEEP", "REVERT", "NEUTRAL")
+
+# DEFERRED: Der Hypothesis-Agent hat eine Wissenslücke erkannt und keine
+# freigegebene Quelle gefunden, die sie schliesst. Es gab keine Mutation und
+# keine Messung, sondern eine Frage an den Menschen (knowledge-gaps.jsonl).
+# Der Wert kommt wie SKIP, INVALID und NO_OP aus dem Ablauf, nie aus decide().
 
 IMPROVEMENT_THRESHOLD = 0.02
 REGRESSION_THRESHOLD = 0.05
@@ -621,10 +632,27 @@ def is_plateau(decisions: list, window: int = 3) -> bool:
     Die alte Formulierung ("3 aufeinanderfolgende NEUTRAL/REVERT") liess
     NEAR_MISS ausser Acht, und NEAR_MISS war durch die kaputte Kaskade der
     häufigste Ausgang. Ein Lauf im mittleren Band brach deshalb nie ab.
+
+    ``DEFERRED`` wird vor dem Fenster herausgefiltert, nicht als Nicht-KEEP
+    gezählt und auch nicht als Streak-Unterbrechung behandelt. Ein deferriertes
+    Experiment hat nichts gemessen: Es hat eine Wissenslücke gemeldet und eine
+    Frage gestellt. Zählte es mit, beendete eine Serie unbeantworteter Fragen
+    den Lauf, obwohl keine einzige Hypothese gescheitert ist. Unterbräche es
+    die Serie, verhinderte eine eingestreute Frage jede Plateau-Erkennung.
+    Herausfiltern ist der einzige Ausgang, der beides vermeidet.
+
+    ``SKIP``, ``INVALID`` und ``NO_OP`` zählen bewusst weiter mit: dort ist
+    etwas kaputt oder wirkungslos, und drei davon in Folge sind ein Grund
+    anzuhalten. Bei DEFERRED ist nichts kaputt, das Mittel dagegen liegt beim
+    Menschen und nicht im Loop.
+
+    Der eigene Deckel für DEFERRED ist ``max_deferred_per_run``; er wird im
+    Orchestrator geführt, nicht hier.
     """
-    if len(decisions) < window:
+    considered = [d for d in decisions if d != "DEFERRED"]
+    if len(considered) < window:
         return False
-    return all(d != "KEEP" for d in decisions[-window:])
+    return all(d != "KEEP" for d in considered[-window:])
 
 
 # ─── TSV-Logging ──────────────────────────────────────────────────────────
@@ -709,6 +737,7 @@ DEFAULT_SKILL_CATEGORIES = [
     "efficiency",
     "scripts",
     "structure",
+    "knowledge",
 ]
 
 
@@ -790,7 +819,7 @@ def update_coverage_matrix(
         matrix_path: Pfad zur coverage-matrix.json
         category: Kategorie des Experiments
         experiment_id: ID des Experiments
-        decision: KEEP, REVERT, NEUTRAL, SKIP, NO_OP oder INVALID
+        decision: KEEP, REVERT, NEUTRAL, SKIP, NO_OP, INVALID oder DEFERRED
         delta: Score-Delta des Experiments (roh, in Metrik-Einheiten)
         saturation_threshold: Min. Experimente für Sättigung
         saturation_min_delta: Min. Verbesserung um nicht saturiert zu sein
@@ -805,8 +834,11 @@ def update_coverage_matrix(
        schlimmste Regression als Bestwert und lenkte den Hypothesis-Agent
        systematisch in die falsche Kategorie.
 
-    INVALID, SKIP und NO_OP zählen nicht in die Sättigung. Sonst gilt eine
-    Kategorie als abgegrast, obwohl sie nie wirklich gemessen wurde.
+    INVALID, SKIP, NO_OP und DEFERRED zählen nicht in die Sättigung. Sonst gilt
+    eine Kategorie als abgegrast, obwohl sie nie wirklich gemessen wurde. Bei
+    DEFERRED wiegt das besonders schwer: die Kategorie ``knowledge`` würde nach
+    drei unbeantworteten Fragen als erledigt gelten, obwohl noch kein einziger
+    Claim im Bestand liegt.
     """
     path = Path(matrix_path)
     with open(path, "r") as f:
@@ -830,10 +862,10 @@ def update_coverage_matrix(
         cat["experiments_reverted"] += 1
     elif decision == "NEUTRAL":
         cat["experiments_neutral"] += 1
-    elif decision in ("INVALID", "SKIP", "NO_OP"):
+    elif decision in ("INVALID", "SKIP", "NO_OP", "DEFERRED"):
         cat["experiments_invalid"] += 1
 
-    counted = decision in ("KEEP", "REVERT", "NEUTRAL")
+    counted = decision in MEASURED_DECISIONS
 
     # Best Delta aktualisieren, richtungsbewusst und nur für gemessene Läufe
     oriented = delta if direction == "higher_is_better" else -delta
@@ -2253,6 +2285,232 @@ def format_rejected(path: str, limit: int = 10) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+# ─── PURPOSE.md: warum der Skill so aussieht ──────────────────────────────
+
+
+PURPOSE_HEADER = """# Warum dieser Skill so aussieht
+
+<!-- Vom Skill Forge Loop geführt. Der Agent liest diese Datei zur Laufzeit
+     nicht; sie ist für Menschen und für den nächsten Optimierer da. -->
+
+Ein Eintrag je behaltener Änderung, in der Reihenfolge ihrer Entstehung.
+Verworfene Vorversuche stehen dabei, weil sie erklären, warum die behaltene
+Fassung so aussieht und nicht anders — ohne sie liest sich die Datei wie ein
+Changelog, und der teuerste Teil der Information fehlt.
+"""
+
+PURPOSE_ENTRY_RE = re.compile(
+    r"^## (?P<experiment>exp-\d+) — (?P<category>[^—]+) — ", re.MULTILINE
+)
+
+
+PURPOSE_HEAD_RE = re.compile(
+    r"^## (?P<experiment>exp-\d+) — (?P<category>[^—]+) — "
+    r"(?P<mutation_type>[^—]+) — (?P<date>\S+)\s*$"
+)
+PURPOSE_FIELD_RE = re.compile(r"^\*\*(?P<key>[^:*]+):\*\*\s*(?P<value>.+)$")
+PURPOSE_REJECTED_RE = re.compile(
+    r"^- (?P<experiment>exp-\d+) (?P<mutation_type>\S+) (?P<decision>[A-Z_]+)"
+    r"(?: \((?P<delta>[-+][0-9.]+)\))? — (?P<hypothesis>.+)$"
+)
+
+
+def read_purpose_entries(purpose_path: str) -> list:
+    """Bereits verzeichnete Einträge als ``[{experiment, category}]``."""
+    path = Path(purpose_path)
+    if not path.exists():
+        return []
+    return [
+        {"experiment": m.group("experiment"),
+         "category": m.group("category").strip()}
+        for m in PURPOSE_ENTRY_RE.finditer(path.read_text(encoding="utf-8"))
+    ]
+
+
+def read_purpose(purpose_path: str) -> list:
+    """Vollständige Einträge samt verworfener Vorversuche.
+
+    Gegenstück zu ``append_purpose``. Gebraucht wird es bei der Aufnahme eines
+    **übergebenen** Skills: dort steht auf der Platte, was frühere Läufe schon
+    versucht haben, und ohne diese Funktion läse es niemand.
+    """
+    path = Path(purpose_path)
+    if not path.exists():
+        return []
+    entries, current = [], None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        head = PURPOSE_HEAD_RE.match(line)
+        if head:
+            current = {
+                "experiment": head.group("experiment"),
+                "category": head.group("category").strip(),
+                "mutation_type": head.group("mutation_type").strip(),
+                "date": head.group("date").strip(),
+                "fields": {}, "rejected": [],
+            }
+            entries.append(current)
+            continue
+        if current is None:
+            continue
+        field = PURPOSE_FIELD_RE.match(line)
+        if field:
+            current["fields"][field.group("key").strip()] = field.group("value").strip()
+            continue
+        rejected = PURPOSE_REJECTED_RE.match(line)
+        if rejected:
+            current["rejected"].append({
+                "experiment": rejected.group("experiment"),
+                "mutation_type": rejected.group("mutation_type"),
+                "decision": rejected.group("decision"),
+                "delta": rejected.group("delta"),
+                "hypothesis": rejected.group("hypothesis").strip(),
+            })
+    return entries
+
+
+PURPOSE_INHERITED_HEADER = (
+    "Aus der PURPOSE.md des Ziel-Skills: was frühere Läufe hier schon versucht "
+    "haben. Das ist **schwächere Evidenz als die eigene History** — jene Läufe "
+    "hatten womöglich ein anderes Eval-Set, ein anderes Modell und eine andere "
+    "Baseline. Als Hinweis lesen, nicht als Regel: ein hier verworfener Ansatz "
+    "ist einen zweiten Versuch wert, wenn die aktuelle Evidenz für ihn spricht. "
+    "Wiederhole ihn aber nicht unbesehen."
+)
+
+
+def format_purpose(purpose_path: str, limit: int = 10) -> str:
+    """Prompt-Block über die Vorgeschichte eines übergebenen Skills.
+
+    Der Inhalt stammt aus einem fremden Artefakt und wird wie jeder Fremdtext
+    einzeilig und ohne Markdown-Struktur eingesetzt — eine PURPOSE.md, die ein
+    Dritter mitgeliefert hat, ist Daten, keine Anweisung.
+    """
+    entries = read_purpose(purpose_path)
+    if not entries:
+        return ""
+    kept = entries[-limit:] if limit else entries
+    lines = [PURPOSE_INHERITED_HEADER, "", "Hat hier genommen:"]
+    for entry in kept:
+        lines.append("- %s %s/%s%s — %s" % (
+            entry["experiment"], entry["category"], entry["mutation_type"],
+            (" " + entry["fields"]["Score"]) if "Score" in entry["fields"] else "",
+            _flatten(entry["fields"].get("Hypothese", "ohne Angabe")),
+        ))
+    rejected = [r for e in kept for r in e["rejected"]]
+    if rejected:
+        lines += ["", "Ist hier gescheitert:"]
+        for row in rejected[-limit:]:
+            lines.append("- %s %s %s%s — %s" % (
+                row["experiment"], row["mutation_type"], row["decision"],
+                (" (%s)" % row["delta"]) if row["delta"] else "",
+                _flatten(row["hypothesis"]),
+            ))
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _exp_number(experiment_id: str) -> int:
+    match = re.search(r"(\d+)", str(experiment_id))
+    return int(match.group(1)) if match else -1
+
+
+def rejected_predecessors(rejected_path: str, category: str,
+                          before_experiment: str,
+                          after_experiment: str | None = None) -> list:
+    """Verworfene Versuche derselben Kategorie, die dieser Änderung vorausgingen.
+
+    Das ist der eigentliche Wert der Datei. Ein Changelog sagt, was drinsteht;
+    diese Liste sagt, was zuerst nicht funktioniert hat — und genau daran
+    erkennt ein späterer Leser, ob er einen bereits gescheiterten Weg gerade
+    wieder einschlägt.
+
+    Abgegrenzt wird nach unten durch den zuletzt in PURPOSE.md verzeichneten
+    Eintrag derselben Kategorie: jeder verworfene Versuch wird genau einmal
+    zugeordnet, nämlich der nächsten behaltenen Änderung nach ihm.
+    """
+    upper = _exp_number(before_experiment)
+    lower = _exp_number(after_experiment) if after_experiment else -1
+    hits = []
+    for entry in read_rejected(rejected_path):
+        if (entry.get("category") or "").strip() != category.strip():
+            continue
+        number = _exp_number(entry.get("experiment", ""))
+        if lower < number < upper:
+            hits.append(entry)
+    return sorted(hits, key=lambda e: _exp_number(e.get("experiment", "")))
+
+
+def append_purpose(purpose_path: str, *, experiment: str, category: str,
+                   mutation_type: str, hypothesis: str,
+                   section: str = "", score_before: float | None = None,
+                   score_after: float | None = None,
+                   delta: float | None = None,
+                   rejected_path: str | None = None,
+                   knowledge: list | None = None,
+                   pattern: str | None = None) -> dict:
+    """Schreibt fort, warum eine behaltene Änderung so aussieht.
+
+    Die Datei liegt beim Ziel-Skill und wird mit ihm weitergegeben. Sie zählt
+    **nicht** gegen ``token_budget``: der Agent liest sie zur Laufzeit nicht,
+    und sie steht deshalb auch nicht im Scope von ``artifact-stats``.
+
+    Idempotent über die Experiment-ID. Ein Resume, das dasselbe Experiment
+    erneut verbucht, hängt keinen zweiten Eintrag an.
+    """
+    path = Path(purpose_path)
+    existing = read_purpose_entries(purpose_path)
+    if any(e["experiment"] == experiment for e in existing):
+        return {"appended": False, "reason": "bereits verzeichnet",
+                "experiment": experiment}
+
+    previous = [e for e in existing if e["category"].strip() == category.strip()]
+    after = previous[-1]["experiment"] if previous else None
+    predecessors = (
+        rejected_predecessors(rejected_path, category, experiment, after)
+        if rejected_path else []
+    )
+
+    lines = ["", "## %s — %s — %s — %s" % (
+        experiment, category, mutation_type, _utc_now()[:10]
+    ), ""]
+    lines.append("**Hypothese:** %s" % " ".join(str(hypothesis).split()))
+    if section:
+        lines.append("**Abschnitt:** %s" % section)
+    if score_before is not None and score_after is not None:
+        shown = delta if delta is not None else score_after - score_before
+        lines.append("**Score:** %.4f → %.4f (%+.4f)"
+                     % (score_before, score_after, shown))
+    if pattern:
+        lines.append("**Muster:** %s" % pattern)
+    if knowledge:
+        lines.append("**Wissen:** %s" % ", ".join(str(k) for k in knowledge))
+
+    if predecessors:
+        lines += ["", "Vorher verworfen in derselben Kategorie:"]
+        for entry in predecessors:
+            before, after_score = entry.get("score_before"), entry.get("score_after")
+            delta_text = ""
+            if isinstance(before, (int, float)) and isinstance(after_score, (int, float)):
+                delta_text = " (%+.4f)" % (after_score - before)
+            lines.append("- %s %s %s%s — %s" % (
+                entry.get("experiment", "?"),
+                entry.get("mutation_type", "?"),
+                entry.get("decision", "?"),
+                delta_text,
+                _flatten(entry.get("hypothesis", ""))[:120] or "ohne Hypothese",
+            ))
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text(PURPOSE_HEADER, encoding="utf-8")
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write("\n".join(lines).rstrip() + "\n")
+    return {
+        "appended": True, "experiment": experiment, "category": category,
+        "predecessors": [e.get("experiment") for e in predecessors],
+        "path": str(path),
+    }
+
+
 # ─── Tiered History ──────────────────────────────────────────────────────
 
 
@@ -2611,6 +2869,33 @@ def main():
     )
 
     # Plateau
+    purpose_parser = subparsers.add_parser(
+        "purpose-append",
+        help="Warum eine behaltene Änderung so aussieht, in die PURPOSE.md des Ziels",
+    )
+    purpose_parser.add_argument("purpose_path", help="Pfad zur PURPOSE.md des Ziel-Skills")
+    purpose_parser.add_argument("--experiment", required=True)
+    purpose_parser.add_argument("--category", required=True)
+    purpose_parser.add_argument("--mutation-type", required=True)
+    purpose_parser.add_argument("--hypothesis", required=True)
+    purpose_parser.add_argument("--section", default="")
+    purpose_parser.add_argument("--before", type=float, dest="score_before")
+    purpose_parser.add_argument("--after", type=float, dest="score_after")
+    purpose_parser.add_argument("--delta", type=float)
+    purpose_parser.add_argument(
+        "--rejected", dest="rejected_path",
+        help="rejected.jsonl; liefert die verworfenen Vorversuche",
+    )
+    purpose_parser.add_argument("--knowledge", action="append", default=[])
+    purpose_parser.add_argument("--pattern")
+
+    purpose_fmt = subparsers.add_parser(
+        "purpose-format",
+        help="Vorgeschichte eines übergebenen Skills als Prompt-Block",
+    )
+    purpose_fmt.add_argument("purpose_path")
+    purpose_fmt.add_argument("--limit", type=int, default=10)
+
     plateau_parser = subparsers.add_parser(
         "plateau", help="Prüfen, ob die letzten N Entscheidungen ein Plateau sind"
     )
@@ -2966,14 +3251,33 @@ def main():
         else:
             print(format_comparison(result))
 
+    elif args.command == "purpose-append":
+        result = append_purpose(
+            args.purpose_path, experiment=args.experiment,
+            category=args.category, mutation_type=args.mutation_type,
+            hypothesis=args.hypothesis, section=args.section,
+            score_before=args.score_before, score_after=args.score_after,
+            delta=args.delta, rejected_path=args.rejected_path,
+            knowledge=args.knowledge, pattern=args.pattern,
+        )
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+
+    elif args.command == "purpose-format":
+        block = format_purpose(args.purpose_path, limit=args.limit)
+        if block:
+            print(block, end="")
+
     elif args.command == "plateau":
         history = json.loads(Path(args.history_path).read_text())
         decisions = [e.get("decision") for e in history.get("experiments", [])]
         reached = is_plateau(decisions, window=args.window)
+        considered = [d for d in decisions if d != "DEFERRED"]
+        deferred = len(decisions) - len(considered)
         print(json.dumps({
             "plateau": reached,
             "window": args.window,
-            "last_decisions": decisions[-args.window:],
+            "last_decisions": considered[-args.window:],
+            "deferred_skipped": deferred,
             "reason": (
                 "%d aufeinanderfolgende Nicht-KEEP" % args.window if reached
                 else "kein Plateau"

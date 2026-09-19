@@ -397,8 +397,8 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
       </section>
 
       <section class="screen animate-in">
-        <h2 class="screen-heading">Fünf Helfer im Hintergrund</h2>
-        <p>Skill Forge nutzt fünf spezialisierte <span class="term" data-tooltip="Ein Agent ist ein KI-Modul mit einer klar definierten Aufgabe. Jeder Agent liest Eingaben, verarbeitet sie und gibt ein strukturiertes Ergebnis zurück.">Agenten</span>, die zusammenarbeiten:</p>
+        <h2 class="screen-heading">Sechs Helfer im Hintergrund</h2>
+        <p>Skill Forge nutzt sechs spezialisierte <span class="term" data-tooltip="Ein Agent ist ein KI-Modul mit einer klar definierten Aufgabe. Jeder Agent liest Eingaben, verarbeitet sie und gibt ein strukturiertes Ergebnis zurück.">Agenten</span>. Vier arbeiten in jeder Runde, der Archivar alle fünf Runden, der Bibliothekar nur wenn eine Tatsache fehlt:</p>
         <div class="card-grid stagger-children">
           <div class="card animate-in">
             <div class="card-icon">🔬</div>
@@ -424,6 +424,11 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
             <div class="card-icon">📜</div>
             <div class="card-title">Der Archivar</div>
             <div class="card-text">Alle fünf Experimente destilliert er, welche Art von Änderung bei genau diesem Skill funktioniert. Seine Notizen sind für den Optimierer, nicht für den Skill selbst, und jeder Punkt braucht ein Experiment als Beleg.</div>
+          </div>
+          <div class="card animate-in">
+            <div class="card-icon">📖</div>
+            <div class="card-title">Der Bibliothekar</div>
+            <div class="card-text">Kommt ins Spiel, wenn nicht die Anweisung fehlt, sondern eine Tatsache. Er sucht die Antwort in dem Material, das du bereitgestellt hast, und notiert sie mit Quelle und Fundstelle. Findet er nichts, ist das ein gültiges Ergebnis: dann steht die Frage morgens im Report.</div>
           </div>
         </div>
       </section>
@@ -533,6 +538,34 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
       </section>
 
       <section class="screen animate-in">
+        <h2 class="screen-heading">Wenn Umformulieren nicht hilft</h2>
+        <p>Manche Fehler liegen nicht an unklaren Anweisungen. Kennt ein Lektorats-Skill die Zitierregel eines Verlags nicht, hilft keine Umformulierung: es fehlt eine <strong>Tatsache</strong>.</p>
+        <p>Skill Forge erkennt solche Fälle und erfindet die Antwort nicht. Der naheliegende Weg wäre auch der gefährlichste: ein flüssig formulierter erfundener Satz besteht die Prüfungen leichter als eine sperrige Wahrheit. Die Messung würde ihn also belohnen, statt ihn zu fangen.</p>
+        <div class="card-grid stagger-children">
+          <div class="card animate-in">
+            <div class="card-icon">🔍</div>
+            <div class="card-title">Erkennen</div>
+            <div class="card-text">Vier Merkmale trennen Tatsache von Form: die gescheiterte Prüfung fragt nach einem Wert statt nach einer Form, der Agent hat etwas Konkretes behauptet das falsch war, die Antworten schwanken zwischen den Durchläufen, oder er hat gesucht und nichts gefunden.</div>
+          </div>
+          <div class="card animate-in">
+            <div class="card-icon">📚</div>
+            <div class="card-title">Beschaffen</div>
+            <div class="card-text">Der Bibliothekar sucht in dem Material, das du beim Setup beigelegt hast. Jede Aussage braucht eine registrierte Quelle und eine Fundstelle darin, sonst wird sie nicht geschrieben. Eine offene Internetsuche gibt es nicht.</div>
+          </div>
+          <div class="card animate-in" style="border-top-color:var(--color-warning)">
+            <div class="card-icon">☀️</div>
+            <div class="card-title">Fragen</div>
+            <div class="card-text">Findet er nichts, blockiert der Lauf nicht. Die Frage wird aufgeschrieben, der Loop arbeitet weiter. Morgens steht sie im Report, mit dem Beleg, woran sie aufgefallen ist, und der Form einer brauchbaren Antwort. Meist in unter einer Minute zu beantworten.</div>
+          </div>
+          <div class="card animate-in">
+            <div class="card-icon">🧮</div>
+            <div class="card-title">Pflegen</div>
+            <div class="card-text">Das Wissen liegt beim Skill und wandert mit ihm mit. Quellen sind mit einer Prüfsumme hinterlegt: ändert sich eine, werden die davon abhängigen Aussagen zur Prüfung markiert statt still aktualisiert. Was sich inhaltlich geändert hat, entscheidet ein Mensch.</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen animate-in">
         <h2 class="screen-heading">Wann stoppt der Loop?</h2>
         <div class="card-grid stagger-children">
           <div class="card animate-in" style="border-top-color:var(--color-success)">
@@ -563,7 +596,7 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
             <div class="quiz-option" data-correct="true" onclick="checkQuiz('quiz-3',this)">Um sicherzustellen, dass die Messung funktioniert</div>
           </div>
           <div class="quiz-feedback correct" id="quiz-3-correct">Genau! Der Probelauf prüft, ob die Tests korrekt laufen und ein Score berechnet werden kann. So vermeidest du Fehler im Nachtlauf.</div>
-          <div class="quiz-feedback incorrect" id="quiz-3-incorrect">Nicht ganz. Der Probelauf ist ein Sicherheitscheck: Er stellt sicher, dass die Messung funktioniert, bevor der Loop startet. So läuft alles sauber.</div>
+          <div class="quiz-feedback incorrect" id="quiz-3-incorrect">Nicht ganz. Der Probelauf prüft, ob die Messung überhaupt funktioniert, bevor der Loop startet. Schlägt er fehl, geht es nicht weiter.</div>
         </div>
       </section>
     </div>
@@ -619,6 +652,10 @@ pre,code{white-space:pre-wrap;word-break:break-word;overflow-x:hidden}
           <div class="setting-row animate-in">
             <div class="setting-name">Crash-Limit</div>
             <div class="setting-desc">Nach 3 Fehlern in Folge stoppt der Loop. Schützt vor endlosen Schleifen.</div>
+          </div>
+          <div class="setting-row animate-in">
+            <div class="setting-name">Wissensquellen</div>
+            <div class="setting-desc">Material, das der Skill kennen muss: Richtlinien, Normen, Glossare. Legst du beim Setup welche bei, kann der Loop Wissenslücken selbst schliessen, statt morgens danach zu fragen.</div>
           </div>
         </div>
       </section>

@@ -1,8 +1,8 @@
 # Release Notes
 
-## Unreleased: Rauschgrenze gemessen, Metrik markiert
+## Unreleased: Rauschgrenze, Metrik, Wissen, Optimierer-Gedächtnis und Herkunft
 
-_Versionsnummer vergibt der Owner beim Release; Stand 2026-09-16._
+_Versionsnummer vergibt der Owner beim Release; Stand 2026-09-19._
 
 **`noise_floor` war ein Platzhalter.** Der Key ging in die Keep-Schwelle ein,
 stand aber immer auf 0.0, und `architecture.md` führte das als offene
@@ -27,7 +27,323 @@ Anregung für beides: das Projekt autoresearch-with-claude-code
 schnellen Workloads den Median mehrerer Läufe melden lässt. Kein Code
 übernommen.
 
-12 neue Tests, 283 insgesamt.
+12 neue Tests.
+
+**Der Loop kannte fehlendes Wissen nicht als Fehlerursache.** Die
+Klassifikation kannte zwei Klassen, `SKILL_DEFECT` und `EXECUTION_LAPSE`, und
+beide setzen voraus, dass der Agent die Aufgabe lösen könnte, wenn man ihm nur
+klar genug sagt wie. Fehlt eine Tatsache — eine Zitierregel, eine API-Signatur,
+eine Frist —, stimmt das nicht, und der Fall landete als `SKILL_DEFECT`: der
+Mutator bekam den Auftrag, eine bereits präzise Anweisung zu schärfen. Der
+Mutationstyp `reference_add` trug seit v2 die Beschreibung „Agent braucht
+Domänenwissen", ohne dass es einen Weg gab, dieses Wissen zu beschaffen — der
+Mutator hätte die Referenzdatei aus dem Modellgedächtnis gefüllt. Genau dort
+entstehen selbstbewusste Falschaussagen, und das Gate fängt sie nicht, sondern
+belohnt sie: eine plausibel klingende Erfindung besteht Assertions und einen
+LLM-Judge oft besser als eine sperrige Wahrheit.
+
+Neu ist die dritte Klasse `KNOWLEDGE_GAP` mit vier mechanischen Markern
+(Assertion prüft einen Wert statt einer Form; der Agent hat konkret etwas
+Falsches behauptet; die Antworten streuen über Runs; der Agent hat gesucht und
+nichts gefunden). Der Default ist asymmetrisch gegen sie: der Wissenszweig ist
+der teuerste der drei, weil er einen Menschen unterbricht. Statt einer Mutation
+erzeugt ein solcher Befund eine Frage in `knowledge-gaps.jsonl` und die
+Entscheidung `DEFERRED`.
+
+**`DEFERRED` blockiert den Auto-Modus nicht.** Ein Overnight-Lauf kann niemanden
+fragen. Blockierte er, stünde der Loop still; antwortete er selbst, erfände er
+Fakten. Stattdessen wird die Frage aufgeschrieben, der Loop arbeitet an
+Formulierung und Determinismus weiter, und der Morning Report führt die offenen
+Fragen in einem eigenen Abschnitt. Der Lauf liefert damit nicht nur einen
+besseren Skill, sondern eine kurze Liste präziser Fragen.
+
+**Plateau-Erkennung filtert `DEFERRED` heraus, statt es zu zählen.** Beide
+naheliegenden Alternativen sind falsch: zählte es als Nicht-KEEP, beendete eine
+Serie unbeantworteter Fragen den Lauf, obwohl keine einzige Hypothese
+gescheitert ist; unterbräche es die Serie, verhinderte eine eingestreute Frage
+alle drei Runden jede Plateau-Erkennung. Herausfiltern vermeidet beides, und es
+füllt das Fenster auch nicht auf: zwei gemessene Nicht-KEEP plus eine Frage sind
+kein Plateau. `SKIP`, `INVALID` und `NO_OP` zählen weiter mit — dort ist etwas
+kaputt, und drei davon in Folge sind ein Grund anzuhalten.
+
+Die Belegpflicht erzwingt `scripts/knowledge.py`, nicht der Prompt: eine Frage
+mit weniger als zwei `eval_ids` wird mit Exit 1 abgewiesen, und Dedup über die
+normalisierte Frage verhindert, dass derselbe Punkt jede Nacht neu gestellt
+wird. Eine als `rejected` verworfene Frage bleibt gesperrt; eine bereits
+beantwortete, deren Fehlermuster wiederkehrt, ist kein Wissensproblem mehr,
+sondern ein fehlender Verweis — also ein `SKILL_DEFECT`.
+
+Das ist Phase 1 aus `PLAN-wissen-v1.md`: erkennen und fragen, ohne jeden
+Schreibzugriff auf einen Wissensbestand. Wissen entgegennehmen, evidenzgebunden
+ablegen und pflegen sind Phase 2 bis 4 und sind nicht implementiert.
+
+32 neue Tests.
+
+**Wissen aufnehmen statt nur danach fragen.** Der Loop kann eine gemeldete
+Wissenslücke jetzt aus bereitgestelltem Material schliessen. Neu sind ein
+Wizard-Schritt für Wissensquellen, ein Wissensbestand beim Ziel-Skill, der
+Librarian-Agent und fünf Gates vor jedem Claim.
+
+Der Bestand liegt beim Ziel-Skill, nicht im Workspace: Wissen, das der Skill
+braucht, gehört zum Skill und wird mit ihm weitergegeben. Format und
+ID-Präfixe sind eine Teilmenge des SkillSafe-Wissenstresors (`C-nnnn` Claim,
+`S-nnnn` Quelle) und bleiben formatkompatibel — übernommen ist das Konzept,
+nicht der Code, und SkillSafe ist keine Abhängigkeit.
+
+**Die zentrale Entscheidung ist eine Trennung.** Ob eine Formulierung besser
+ist, entscheidet die Messung; ob eine Tatsache stimmt, entscheidet die Quelle.
+Ein Eval-Score ist kein Wahrheitskriterium. Der *Verweis* aus der SKILL.md auf
+den Bestand ist deshalb eine gewöhnliche, gate-pflichtige Mutation, der *Inhalt*
+des Bestands nicht: dort prüfen Provenienz, Leak, Injection, Secrets und eine
+Near-Duplicate-Sperre. Alle fünf laufen in Python und nicht als Punkt auf einer
+Prompt-Checkliste — einen Agenten, der eine Regel nicht befolgt hat, per Prompt
+prüfen zu lassen, ob er sie befolgt hat, ist zirkulär.
+
+Der wichtigste der fünf ist der Leak-Check. Ohne ihn wäre die naheliegendste
+Optimierung, die erwarteten Eval-Antworten als „Wissen" einzutragen: der
+val-Score stiege, nichts generalisierte, und der Overfitting-Schutz wäre
+unterlaufen. Geprüft wird über Achtwortfenster gegen val **und** test — ein
+Claim, der eine Testantwort enthält, ist auch dann Leakage, wenn er zufällig
+aus einem Dokument stammt.
+
+Die Near-Duplicate-Sperre heisst bewusst nicht Widerspruchserkennung. Sie fängt
+„gleiche Entität, andere Zahl" und nicht den subtilen Fall. Der Ausweg ist
+trotzdem richtig, denn die Alternative — stilles Überschreiben — verlöre
+belegtes Wissen ohne Spur. Wer ersetzen will, setzt `--supersedes`: der alte
+Claim wird `veraltet`, nicht gelöscht.
+
+**Zwei Budgets statt einem.** `INDEX.md` zählt gegen das strenge
+`token_budget`, weil es bei jedem Lauf im Kontext liegt; die Seiten zählen
+gegen ein eigenes `knowledge_budget`, weil sie nur gelesen werden, wenn der
+Index auf sie zeigt. Mit einem einzigen Budget schlüge `artifact-stats` nach
+wenigen Claims an und zwänge den Orchestrator in `forced_category: efficiency`
+— der Loop finge also an, das gerade erworbene Wissen wieder wegzukürzen.
+
+**Pflege ist eingebaut, Automatik nicht.** `verify` rechnet die Quellen-Hashes
+nach und unterscheidet drei Stufen: `errors` (Claim ohne registrierte Quelle,
+doppelte ID — der Bestand ist nicht vertrauenswürdig), `stale` (die Quelle hat
+sich geändert, die Claims beschreiben einen Stand, den es nicht mehr gibt) und
+`warnings` (eine `verweis`-Quelle, deren Pfad auf dieser Maschine fehlt: nicht
+nachprüfbar, aber nicht falsch — fail-closed machte hier jeden weitergegebenen
+Skill sofort rot). Aktualisiert wird nichts automatisch: was sich inhaltlich
+geändert hat, ist keine Rechenaufgabe.
+
+Der Librarian ist ein eigener Agent und keine Erweiterung des Mutators. Der
+Mutator wird dafür belohnt, etwas zu schreiben; der Librarian muss bereit sein,
+nichts zu liefern. Diese beiden Anreize gehören nicht in denselben Prompt.
+Findet er in den bereitgestellten Quellen nichts, ist `resolved: false` das
+richtige Ergebnis, und die Frage bleibt offen. Eine offene Websuche gibt es
+nicht, in keinem Modus.
+
+**Korrektur am eigenen Plan.** `PLAN-wissen-v1.md` sah die
+`FORGE_KNOWLEDGE`-Region zugleich als byteweise geschützt und als
+gate-pflichtig vor. Beides zusammen geht nicht: was geschützt ist, kann der
+Mutator nicht ändern, und was er nicht ändern kann, kann das Gate nicht
+bewerten — die erste Formulierung des Verweises wäre für immer eingefroren. Die
+Region steht deshalb nicht in `PROTECTED_REGIONS`; dass es den Verweis
+überhaupt gibt, prüft ein Lint in `verify`.
+
+37 neue Tests.
+
+**Was schon im Bestand liegt, war trotzdem eine Wissenslücke.** `gap-append`
+prüfte, ob dieselbe *Frage* schon gestellt wurde — nicht, ob die *Antwort*
+schon im Bestand liegt. Ein beim Wizard eingelegter Fakt ging nie durch die
+Gap-Queue, also griff die Dedup-Prüfung nicht. Die Folge war eine Schleife: der
+Hypothesis-Agent meldet die Lücke, der Librarian findet die Antwort im Bestand,
+wo sie schon war, `claim-add` weist sie als Near-Duplicate ab. Eine Runde
+verbrannt, und die eigentliche Ursache — der Agent hat den Bestand nicht
+konsultiert — blieb unerkannt.
+
+Zwei Ebenen beheben das. Der Bestandsindex liegt jetzt im Agent-Kontext, damit
+der Hypothesis-Agent sieht, welche Themen gedeckt sind; das ist die
+Entscheidung. Und `gap-append --skill` durchsucht den Bestand und bricht mit
+Exit 3 ab; das ist die Rückfallebene. Die Schwelle ist bewusst hoch: ein
+falsches „gedeckt" heisst, die Lücke wird nie gemeldet und die Tatsache nie
+beschafft — ein dauerhafter blinder Fleck. Ein falsches „nicht gedeckt" kostet
+eine Runde. Der zweite Fehler ist erholbar, der erste nicht.
+
+**Ein bestandener train-Eval belegt nicht mehr automatisch, dass der Skill gut
+ist.** Der Agent liest den Bestand auch in den train-Runs. Hat er dort Claims
+gelesen, kam die Tatsache womöglich von dort und nicht aus einer Anweisung —
+solche Runs taugen nicht als `success_patterns`, und `success_patterns` sind
+die Schutzliste, die den Mutator vom Prunen abhält. Umgekehrt: ein
+gescheiterter Eval, dessen Run den passenden Claim gelesen hat, ist keine
+Wissenslücke, sondern ein `SKILL_DEFECT` auf den Verweis. Beide Fälle sind ohne
+Zuordnung nicht von ihrem Gegenteil zu unterscheiden, deshalb erfasst
+`usage-update` nach jedem Experiment aus den Transcripts, welcher Run welche
+Claims gelesen hat. Das ist eine Untergrenze, keine Messung: wer eine Seite
+liest und nichts zitiert, taucht nicht auf. Nebenprodukt ist `never_used` — die
+Grundlage späterer Prune-Vorschläge.
+
+Anlass für beides: WikiSkill (arXiv:2608.27454, Tang et al., Google Research).
+Deren Ablation misst, dass Wiki-Zugriff des Agenten während der
+Trainings-Rollouts die Skill-Qualität senkt (63,7 % auf 60,9 % im Schnitt, auf
+livemath 72,6 % auf 64,8 %), weil die Trajektorien weniger über den Skill
+aussagen. Ihr Mittel — Wiki im Training abschalten — passt hier nicht: deren
+Wiki enthält Verfahren, die in den Skill kompiliert werden sollen, unser
+Bestand enthält Tatsachen, die der Agent zur Laufzeit braucht. Übernommen ist
+die Konsequenz, nicht das Mittel.
+
+16 neue Tests.
+
+**Das Gedächtnis des Optimierers war auf acht Bullets gedeckelt.**
+`editing-notes.md` wurde alle fünf Experimente komplett neu geschrieben. Der
+Deckel hielt den Kontext klein; der Preis war, dass jede Erkenntnis nach
+spätestens zwei Runden herausfiel, sobald eine neuere wichtiger schien, und
+dass am Ende eines Laufs nichts blieb, worauf der nächste hätte aufbauen
+können.
+
+An die Stelle tritt ein unbegrenzter Musterbestand unter
+`<workspace>/patterns/`: eine Seite je Muster, die über Experimente hinweg
+Evidenz sammelt, statt einer Liste, die sich selbst überschreibt. Bezahlbar
+wird das durch die Trennung, die aus WikiSkill (arXiv:2608.27454) übernommen
+ist: **nur `INDEX.md` liegt permanent im Kontext, eine Seite wird einzeln
+gelesen, wenn ihr Titel zur Frage passt.** Zwanzig Muster kosten damit unter
+1200 Token dauerhaft. Ohne diese Trennung wäre ein unbegrenzter Bestand genau
+das Kontextproblem, gegen das der Achter-Deckel einmal gebaut wurde. Daraus
+folgt eine Anforderung an den Meta-Agenten, die jetzt in `agents/meta.md`
+steht: der Titel ist die wichtigste Zeile einer Seite, denn er entscheidet, ob
+sie je geöffnet wird.
+
+Der Anlass ist die stärkste Zahl des Papers: persistentes, über Iterationen
+verdichtetes Optimierer-Wissen bringt dort +15,0 Punkte im Schnitt über vier
+Benchmarks (48,7 % auf 63,7 %), auf einem davon +21,3. Es ist der grösste
+Einzeleffekt der Arbeit.
+
+Drei Regeln halten einen unbegrenzten Bestand davon ab, zu Rauschen zu werden.
+**Evidenz ist programmatisch, Deutung ist Sache des Agenten**: die
+Evidenzzeilen hängt der Orchestrator aus `decision.json` an, nicht der
+Meta-Agent — wer seine eigene Belegzahl schreibt, belegt sich selbst. Dieselbe
+Trennung wie bei WikiSkills `skill-impact.md`, das deren Harness schreibt und
+nicht der Proposer. **Ein Muster mit weniger als zwei gemessenen Belegen heisst
+`vorläufig`**, dieselbe Regel wie `min_support_count` bei den Hypothesen; SKIP,
+INVALID, NO_OP und DEFERRED zählen nicht als Beleg, weil sie nichts gemessen
+haben. Und **Irrtümer bleiben stehen**: ein widerlegtes Muster wird mit dem
+widersprechenden Experiment markiert, nicht gelöscht, damit derselbe Irrtum
+nicht in drei Runden neu entdeckt wird.
+
+Die abgeleiteten Zahlen — Stützzahl, Bestwert, `vorläufig` — stehen bewusst
+nicht auf der Platte, sondern werden bei jedem Lesen neu gerechnet. Das ist die
+Lektion aus der Coverage-Matrix, wo `saturated` einrastete und sich eine
+Kategorie nach einem späteren Treffer nie mehr erholte. Bewusst **keine**
+Trefferquote: ein Muster kann positiv behaupten („Beispiele nehmen hier") oder
+negativ („Prosa-Umformulierungen nicht"), und im zweiten Fall belegen
+NEUTRAL-Zeilen das Muster, während KEEP-Zeilen ihm widersprächen. Eine einzelne
+Quote hiesse für die beiden Fälle Gegenteiliges; ausgewiesen wird die
+Verteilung, die Deutung bleibt beim Leser.
+
+Ältere Workspaces mit `editing-notes.md` verlieren nichts: der Meta-Agent liest
+die Datei einmal als Ausgangsmaterial — jeder Bullet mit Experiment-ID wird eine
+Musterseite — und schreibt sie danach nicht mehr fort.
+
+25 neue Tests.
+
+**Nach der Weitergabe wusste niemand mehr, warum ein Abschnitt existiert.**
+`history.json` und `rejected.jsonl` halten das fest, liegen aber im Workspace.
+Der optimierte Skill bekommt jetzt eine `PURPOSE.md`: ein Eintrag je behaltener
+Änderung, mit Hypothese, Abschnitt, Score-Verlauf — und den verworfenen
+Vorversuchen derselben Kategorie, die ihr vorausgingen. Ohne die liest sich die
+Datei wie ein Changelog; mit ihnen erkennt ein späterer Leser, dass er gerade
+einen bereits gescheiterten Weg wieder einschlägt. Jeder Fehlversuch wird genau
+einmal zugeordnet, nämlich der nächsten behaltenen Änderung nach ihm. Die Datei
+zählt nicht gegen `token_budget`, weil der Agent sie zur Laufzeit nicht liest.
+Vorbild ist WikiSkills `PURPOSE.md` („Previous attempt goal-directed-action was
+rejected for being too abstract").
+
+**Der Dreiwege-Split sieht eine Sorte Überanpassung nicht.** Er schützt davor,
+die eigenen Testfälle auswendig zu lernen. Er schützt nicht davor, sich an das
+eine Modell und den einen Aufbau anzupassen, unter dem der Lauf stattfand —
+train, val und test stammen aus derselben Verteilung und laufen unter demselben
+Modell. WikiSkill misst, was dabei entstehen kann: Skills, die ein kleineres
+Modell für sich entwickelt hatte, senkten ein stärkeres auf derselben Aufgabe
+von 50,5 % auf 18,1 %, weil sie niedrigschwellige Umgehungen seiner Schwächen
+kodierten. Der Gate-Score sieht diesen Schaden nicht — er misst genau die
+Kombination, für die der Notbehelf gebaut wurde.
+
+Zwei Gegenmittel, beide ohne Eingriff ins Gate. `agents/mutator.md` hat einen
+neuen Abschnitt 4.2b mit der Prüffrage vor jeder Regel: wäre sie auch für ein
+stärkeres Modell oder einen anderen Aufbau richtig, oder umgeht sie eine
+Einschränkung des gerade laufenden? Und ein optionales `transfer_evals`-Set aus
+einem anderen Kontext wird zweimal gemessen — Baseline und Endversion — und
+berichtet. **Es entscheidet nichts**, aus demselben Grund, aus dem der
+test-Split nichts entscheidet: was mitoptimiert wird, misst nichts mehr.
+Steigendes val bei fallendem Transfer ist die Signatur eines Notbehelfs, und
+der Report sagt das.
+
+**Eine Korrektur an der eigenen Analyse.** Die Formulierung „muss den Score über
+jede registrierte Repository verbessern", die in einer früheren Sitzungsnotiz
+als Vorbild auftauchte, stammt aus einem Nachbau-README und nicht aus dem
+Paper. WikiSkill gated auf einem einzigen `Dval`; seine Transferzahlen sind
+Analyse, nicht Torwächter. Ein Gate über mehrere Ziele wäre eine eigene
+Entwurfsentscheidung mit eigenen Kosten und ist bewusst nicht gebaut.
+
+6 neue Tests.
+
+**Der Wissenspfad hatte kein durchgelaufenes Beispiel.** `generic-mode-lauf.md`
+zeigt seit v3, wie die Sperren im Generic-Modus greifen; für den Wissenszweig
+mit seinen fünf Gates gab es nur Prosa. `examples/wissensluecke-lauf.md` holt
+das nach: ein Lektorats-Skill, der den Belegstil seines Verlags nicht kennt,
+von der erkannten Lücke über die Beschaffung bis zur Quellendrift. Alle
+Ausgaben stammen aus den gezeigten Aufrufen.
+
+Drei Gates lösen darin an echten Daten aus. Der Leak-Check weist den einen
+Claim ab, der wörtlich die Assertion eines val-Evals ist — er hätte alle
+anderen Prüfungen bestanden und den Score gehoben, ohne dass etwas
+generalisiert. Das Secret-Gate schlägt bei einem Key im Quelltext an, das
+Provenienz-Gate bei einer Aussage ohne registrierte Quelle. Dazu die beiden
+Fälle, die sich leicht verwechseln lassen: eine umformulierte Frage, die der
+Bestand schon deckt (Exit 3, kein DEFERRED), und eine, für die es keine Quelle
+gibt (DEFERRED, Frage im Report).
+
+**Prune-Vorschläge schliessen Phase 4 ab.** `prune-suggest` listet Claims, die
+über `knowledge_stale_experiments` Experimente (Default 20) nie gelesen wurden.
+Der Befehl schreibt nichts, und der Loop löscht im Auto-Modus keinen Claim. Die
+Asymmetrie: ein zu Unrecht behaltener Claim kostet ein paar Token in einem weit
+bemessenen Budget; ein zu Unrecht gelöschter kostet Quelle, Fundstelle und die
+Arbeit seiner Beschaffung — und fehlt genau dann, wenn der seltene Fall
+eintritt, für den er aufgenommen wurde.
+
+Nichtnutzung ist zudem ein schwaches Signal, und die Ausgabe sagt das: sie kann
+heissen, dass der Claim überflüssig ist, oder dass die Evals sein Thema nicht
+abdecken, oder dass der Index ihn nicht findet. Löschen behebt nur den ersten
+Fall. Ein bereits als veraltet markierter Claim erscheint nicht erneut.
+
+6 neue Tests.
+
+**Die Maschinerie wurde gebaut und auf übergebene Skills nicht angewendet.**
+Drei Lücken auf dem Weg vom „hier ist mein Skill" bis zur ersten Runde, alle
+drei mit demselben Muster: etwas liegt vor und wird nicht gelesen.
+
+`PURPOSE.md` wurde geschrieben und nie zurückgelesen. Die Datei reist mit dem
+Skill und hält fest, was bei ihm schon versucht wurde und was davon gescheitert
+ist — genau die Information, die einen neuen Lauf vor denselben Sackgassen
+bewahrt. Neu ist `purpose-format`: der Block geht ab Runde 1 in den
+Hypothesis-Kontext. Er markiert sich selbst als schwächere Evidenz als die
+eigene History, weil jene Läufe womöglich ein anderes Eval-Set, ein anderes
+Modell und eine andere Baseline hatten; ein dort gescheiterter Ansatz ist einen
+zweiten Versuch wert, wenn die aktuelle Evidenz für ihn spricht. Und weil die
+Datei aus einem fremden Artefakt stammt, wird Markdown-Struktur darin
+entschärft — sie ist Daten, keine Anweisung.
+
+Der Wizard sah einen übergebenen Skill nicht an. Schritt 2 prüfte, ob die
+SKILL.md existiert und lesbar ist, mehr nicht. Ein Skill bringt aber oft einen
+Wissensbestand, eine `PURPOSE.md` und gefüllte geschützte Regionen aus einem
+früheren Lauf mit. Neuer Schritt 2.5 liest das alles, bevor der Loop startet.
+Wichtig ist dabei die Reihenfolge: ein roter `verify` auf einem geerbten
+Bestand gehört **vor** die Baseline-Messung, sonst misst sie gegen Claims, die
+einen Stand beschreiben, den es nicht mehr gibt — und jedes spätere Delta
+vergleicht gegen diese Messung.
+
+Und der Wizard schaltete die Erkennung ab, wenn der User keine Quellen hatte.
+Wer auf „Gibt es Material, das dieser Skill kennen muss?" mit „nein" antwortete,
+bekam `knowledge_enabled: false` und damit keine einzige Wissenslücke gemeldet.
+Das war rückwärts: die Erkennung braucht keine Quelle, sie stellt eine Frage
+statt sie zu beantworten. Wer „nein" sagt, ist genau der Fall, für den der Zweig
+gebaut ist — wüsste er, welche Tatsache fehlt, stünde sie schon im Skill. Die
+Erkennung bleibt jetzt an, und nur die Beschaffung hängt an vorhandenem
+Material (`knowledge_sources_provided`).
+
+4 neue Tests. Die Suite steht damit bei 410.
 
 ## v3.4 (2026-07-29): Härtung nach der adversarialen Review
 

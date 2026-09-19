@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Skill Forge v3 — Autonomous AI Skill &amp; Code Improvement</title>
-<meta name="description" content="An autonomous experiment loop that makes AI skills and codebases better while you sleep. Two modes: Skill optimization and Generic metric optimization. Auto or Guided execution.">
+<meta name="description" content="An autonomous experiment loop that makes AI skills and codebases better while you sleep. It measures every change, keeps what works, and asks when a fact is missing instead of inventing one.">
 <style>
   :root {
     --bg: #0a0a0f;
@@ -649,8 +649,8 @@
 <!-- Agents -->
 <section>
   <div class="container">
-    <h2>Five <span class="highlight">Agents</span>, One Loop</h2>
-    <p class="section-sub">Each experiment cycle is driven by five specialized agents. Four run every round; the archivist every fifth.</p>
+    <h2>Six <span class="highlight">Agents</span>, One Loop</h2>
+    <p class="section-sub">Four run every round. The archivist runs every fifth. The librarian runs only when a fact is missing.</p>
 
     <div class="agent-grid">
       <div class="agent-card">
@@ -681,7 +681,44 @@
         <div class="agent-icon">&#x1f4dc;</div>
         <h3>Meta Agent</h3>
         <div class="role">The Archivist</div>
-        <p>Every five experiments, distils what kind of edit actually works for this particular skill. Writes to the optimizer's own notes, never into the target skill. Each bullet needs an experiment id, each previous bullet gets a verdict.</p>
+        <p>Every five experiments, distils what kind of edit actually works for this particular skill. Writes pattern pages the optimizer keeps for itself, never into the target skill. Pages are refined as evidence comes in, and a pattern a later experiment contradicts is marked, not deleted.</p>
+      </div>
+      <div class="agent-card">
+        <div class="agent-icon">&#x1f4d6;</div>
+        <h3>Librarian Agent</h3>
+        <div class="role">The Librarian</div>
+        <p>Runs when a failure turns out to be a missing fact rather than a missing instruction. Looks for the answer in material you supplied and writes it down with its source and passage. Finding nothing is a valid result, and the question goes into the morning report instead.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Knowledge -->
+<section>
+  <div class="container">
+    <h2>When Rewording <span class="highlight">Cannot</span> Fix It</h2>
+    <p class="section-sub">Some failures are not about clarity. The skill is missing a fact, and no instruction supplies one.</p>
+
+    <div class="agent-grid">
+      <div class="agent-card">
+        <div class="agent-icon">&#x1f50e;</div>
+        <h3>It tells the difference</h3>
+        <p>Before looking for a cause, every failure is sorted: was the rule already there and ignored, is a fact missing, or is the instruction too vague? Four markers separate fact from form. The failing check tests a value rather than a shape; the agent asserted something concrete that was wrong; the answers vary between runs; the agent searched and came up empty.</p>
+      </div>
+      <div class="agent-card">
+        <div class="agent-icon">&#x1f4da;</div>
+        <h3>It does not invent the answer</h3>
+        <p>A fluent invention passes checks more easily than a clumsy truth, so the gate would reward it. Every claim needs a registered source and a passage in it, or it is not written. Five checks run in Python before anything enters: provenance, leakage against the held-out evals, injected instructions, credentials, and near-duplicates of what is already there.</p>
+      </div>
+      <div class="agent-card">
+        <div class="agent-icon">&#x2600;</div>
+        <h3>It asks in the morning</h3>
+        <p>An overnight run cannot ask anyone. Blocking would stall it, answering itself would make things up. So the question is written down and the loop moves on. You wake up to a better skill and a short list of precise questions, each with the evidence that prompted it and the shape of a useful answer.</p>
+      </div>
+      <div class="agent-card">
+        <div class="agent-icon">&#x1f9ee;</div>
+        <h3>It keeps the knowledge</h3>
+        <p>What it learns lives with the skill, so it travels when you hand the skill over. Sources are hashed: if one changes, the claims resting on it are flagged for review rather than quietly updated. Claims nobody reads become a suggestion in the report, never a deletion.</p>
       </div>
     </div>
   </div>
@@ -866,7 +903,7 @@
       <div class="feature">
         <div class="feature-dot"></div>
         <div>
-          <h4>283 tests, two adversarial reviews</h4>
+          <h4>406 tests, two adversarial reviews</h4>
           <p>Five independent reviewers went through the code, and a mutation test over 69 targeted changes hunted for tests that would not notice a real bug. Every finding is pinned in the suite.</p>
         </div>
       </div>
@@ -890,7 +927,7 @@
         <span class="comment"># Copy into your skills folder (Cowork or OpenClaw)</span><br>
         <span class="cmd">mkdir -p</span> ~/.skills/skills<br>
         <span class="cmd">cp -r</span> skill-forge/ ~/.skills/skills/skill-forge/<br><br>
-        <span class="comment"># Check that the machinery works (283 tests, no API calls)</span><br>
+        <span class="comment"># Check that the machinery works (406 tests, no API calls)</span><br>
         <span class="cmd">python3 -m pytest</span> tests/ -q<br><br>
         <span class="comment"># Auto mode: let it run overnight</span><br>
         <span class="string">"Use skill-forge to improve my linkedin-content skill"</span><br><br>

@@ -66,7 +66,9 @@ Constraint + mechanische Metrik + autonome Iteration = kumulativer Gewinn.
 ├── experiment-log.tsv         # Flaches Log (TSV, eine Zeile pro Experiment)
 ├── coverage-matrix.json       # Experiment-Abdeckung pro Kategorie
 ├── rejected.jsonl             # Nicht-KEEP im Wortlaut, kompaktierungsfest
-├── editing-notes.md           # Meta-Memory, alle 5 Experimente
+├── patterns/                  # Meta-Memory als Musterbestand, unbegrenzt
+│   ├── INDEX.md               #   permanent im Kontext
+│   └── P-NNNN__slug.md        #   auf Abruf gelesen
 ├── checkpoint.json            # Resume-Point (siehe Checkpoint/Resume System)
 ├── snapshots/
 │   ├── pre-exp-001/           # Zustand VOR Experiment 1, also die Baseline
@@ -434,9 +436,11 @@ Spätphase (8+):    Exploitation ██░░░░░░░░  20%
 Sättigungsregel: Eine Kategorie ist saturiert nach ≥3 gemessenen Experimenten
 ohne Verbesserung >0.01. Saturierte Kategorien werden deprioritisiert.
 
-Gemessen heisst KEEP, REVERT oder NEUTRAL. INVALID, SKIP und NO_OP zählen nicht
-mit, sonst gilt eine Kategorie als abgegrast, obwohl dort nie eine Zahl entstanden
-ist. Der Status wird bei jedem Update neu berechnet und nicht nur gesetzt: vorher
+Gemessen heisst KEEP, REVERT oder NEUTRAL. INVALID, SKIP, NO_OP und DEFERRED
+zählen nicht mit, sonst gilt eine Kategorie als abgegrast, obwohl dort nie eine
+Zahl entstanden ist. Bei der Kategorie `knowledge` wiegt das besonders schwer:
+sie würde nach drei unbeantworteten Fragen als erledigt gelten, obwohl noch kein
+einziger Versuch gemessen wurde. Der Status wird bei jedem Update neu berechnet und nicht nur gesetzt: vorher
 rastete `saturated` ein und löste sich auch nach einem späteren Treffer nie
 wieder.
 
@@ -597,7 +601,7 @@ Bundle-Size, Features rauszuwerfen. Der Exit-Code fängt nichts davon ab, bei
 
 ### Meta-Memory
 
-`<workspace>/editing-notes.md`, geschrieben von `agents/meta.md`, alle 5
+`<workspace>/patterns/`, geschrieben von `agents/meta.md`, alle 5
 Experimente und nur wenn mindestens drei davon KEEP oder REVERT tragen.
 
 Der Inhalt ist optimizer-seitig und landet nie in der Ziel-SKILL.md. SkillOpts

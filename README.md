@@ -101,15 +101,16 @@ fall into four groups.
   ranks them against four criteria in the same prompt. Still exactly one change
   per experiment; that rule is stricter than SkillOpt's edit budget of four and
   it stays.
-- **Meta memory.** `editing-notes.md` records what kind of edit works *for this
-  skill*. Optimizer-facing, never written into the target. Every bullet needs an
-  experiment id, every previous bullet gets a verdict.
+- **Meta memory.** The optimizer keeps notes on what kind of edit works *for
+  this skill*, separate from the skill itself and never written into it. Every
+  entry needs an experiment id. (It has since grown into a pattern store — see
+  [The optimizer's own memory](#the-optimizers-own-memory).)
 - **Evidence is never truncated.** The context budget applies to history and
   notes, not to the transcripts of the current experiment.
 
 ### And it is tested
 
-283 tests under `tests/` (`python3 -m pytest tests/ -q`), including `test_review_findings.py`, which pins every
+410 tests under `tests/` (`python3 -m pytest tests/ -q`), including `test_review_findings.py`, which pins every
 defect two adversarial review rounds found in this code. A mutation test over 69
 targeted code changes drove the remaining blind spots out.
 
@@ -138,7 +139,11 @@ deliberate reward hacks were each rejected.
        │ PASS
        ▼
 ┌──► Hypothesis ── train split only
-│     │            classify defect vs lapse, three candidates, rank, pick one
+│     │            classify lapse / knowledge gap / defect, three candidates,
+│     │            rank, pick one
+│     ▼
+│    knowledge gap? ── yes ──► gap-append, ask the human ──────────────► DEFERRED
+│     │ no
 │     ▼
 │    snapshot ─────────── state before experiment N
 │    invariants-snapshot ─ protected paths, file count, byte size
@@ -169,7 +174,7 @@ deliberate reward hacks were each rejected.
 │     ▼
 │    tsv-append · coverage-update · artifact-stats · checkpoint-save
 │     │
-└─────┘  every 5 experiments: editing-notes.md
+└─────┘  every 5 experiments: patterns/
          stop on: target reached · max_experiments · 3 consecutive non-KEEP
                   · time budget · 3 consecutive crashes
 
@@ -202,17 +207,56 @@ goes through one of them.
 | `tsv-init` / `tsv-append` | Flat log, direction-aware |
 | `coverage-init` / `coverage-update` | Coverage matrix with saturation |
 | `compact` / `agent-history` / `group-history` | History views for the agents |
+| `purpose-append` | Why a kept change looks like this, into the target's `PURPOSE.md`, with the rejected predecessors |
+| `purpose-format` | Reads an inherited `PURPOSE.md` back: what earlier runs on this skill already tried |
 | `checkpoint-save` / `checkpoint-info` | Resume across sessions and crashes |
 
-### The five agents
+`scripts/knowledge.py` holds the knowledge-gap queue. Separate script, separate
+test file: `composite_score.py` turns two numbers into a verdict, this one keeps
+a list of open questions, and the two fail in different ways.
+
+| Subcommand | Purpose |
+|---|---|
+| `gap-append` | Records a knowledge gap if it is new. Rejects a question backed by fewer than two train evals |
+| `gap-resolve` | Appends a new state (answered, sourced, rejected, conflict). Never overwrites |
+| `gap-list` / `gap-stats` | Current state per gap, counts per status |
+| `gap-format` | The block rendered into the agent prompt and the morning report |
+| `init` | Creates the knowledge tree next to the target SKILL.md |
+| `source-add` | Registers a source with SHA-256, trust level and rights |
+| `claim-add` | Writes claims after all five gates. Exit 2 if none got through |
+| `verify` | Structure, provenance, source drift. Exit 1 on errors or stale sources |
+| `index` | Regenerates `INDEX.md` deterministically |
+| `stats --budget` | Vault size, index counted separately from the pages |
+| `leak-check --evals` | Scans the whole vault against the val and test splits |
+| `search` | Does the vault already answer this question? Exit 0 = yes |
+| `usage-update` | Records from the transcripts which run read which claims |
+| `usage-format` | The usage block rendered into the hypothesis agent's context |
+| `prune-suggest` | Claims never read across many experiments. Suggests; writes nothing |
+
+`scripts/patterns.py` holds the optimizer's own memory — what kind of edit works
+*for this skill*. Separate from `knowledge.py` on purpose: that one holds the
+target skill's knowledge, and coupling the two would be exactly the mixing
+`agents/meta.md` warns against.
+
+| Subcommand | Purpose |
+|---|---|
+| `add` | New pattern page, or several from the meta agent's output |
+| `evidence` | Appends one experiment's outcome. Called by the orchestrator, not the agent |
+| `update` | Refines a pattern, or marks it `widerlegt` with the contradicting experiment |
+| `index` / `format` | Regenerates `INDEX.md`; renders it into the prompt |
+| `show` | One page verbatim — the on-demand read |
+| `stats` | Counts, including what the index costs in tokens |
+
+### The six agents
 
 | Agent | Role | Input | Output |
 |-------|------|-------|--------|
 | **Hypothesis** | "Scientist", analyzes failures, checks coverage matrix | Grading results, SKILL.md, history, coverage | Testable hypothesis with mutation proposal |
 | **Mutator** | "Surgeon", applies one focused change | Hypothesis, target file | Modified file + documentation |
 | **Scorer** | "Judge", evaluates output quality (Skill Mode) | Eval prompt, output | Normalized quality score (0-1) |
-| **Meta** | "Archivar", distils what kind of edit works for this skill; runs every 5 experiments | history, rejected buffer, kept mutations | `editing-notes.md`, max 8 bullets, each with an experiment id |
-| **Orchestrator** | "Conductor", assembles the context for the other three, decides the phase, handles handover and checkpoints | history, coverage matrix, checkpoint.json, near-miss hypotheses | Filled agent context, validated agent outputs, loop meta-decisions |
+| **Meta** | "Archivist", distils what kind of edit works for this skill; runs every 5 experiments | pattern index, history, rejected buffer, kept mutations | New and refined pattern pages under `patterns/` |
+| **Librarian** | "Librarian", sources the answer to a knowledge gap from supplied material — or reports that it found none | Knowledge gap, inbox, source register, existing claims | Sourced claims with passages, or `resolved: false` |
+| **Orchestrator** | "Conductor", assembles the context for the others, decides the phase, handles handover and checkpoints | history, coverage matrix, checkpoint.json, near-miss hypotheses | Filled agent context, validated agent outputs, loop meta-decisions |
 
 ### Setup Wizard (6 Steps)
 
@@ -221,6 +265,8 @@ goes through one of them.
 | 1. Execution mode + target | Auto/Guided selected, target identified | Abort |
 | 2. Define scope | Glob matches ≥1 file (Generic) or SKILL.md found (Skill) | Retry pattern |
 | 3. Define metric | ≥6 evals with a three-way split (Skill) or valid shell command (Generic) | Create evals / reject subjective metric |
+| 2.5. What the skill brings | Inherited vault verified, inherited `PURPOSE.md` read, protected regions shown | A red `verify` is settled before the baseline is measured |
+| 3.5. Knowledge sources | Material registered with trust level and rights, or explicitly none | Detection stays on either way; only sourcing needs material |
 | 4. Set direction | higher\_is\_better or lower\_is\_better confirmed | Abort |
 | 5. Dry-run validation | Exit code 0, output contains parseable number | Suggest fix, retry |
 | 6. Confirm config | User reviews and approves full configuration | Adjust parameters |
@@ -267,6 +313,12 @@ delta >  threshold    →  KEEP      # clear improvement, mutation stays
 delta < -regression   →  REVERT    # regression, roll back
 otherwise             →  NEUTRAL   # roll back as well
 ```
+
+`DEFERRED` is not a fourth outcome of `decide()`. Like `SKIP`, `INVALID` and `NO_OP`
+it comes from the surrounding flow: the hypothesis agent found a missing *fact*
+rather than a missing instruction, so there was no mutation and nothing to measure.
+The loop writes the question to `knowledge-gaps.jsonl` and moves on — see
+[Knowledge gaps](#knowledge-gaps).
 
 `near_miss` is a boolean flag on NEUTRAL, not a separate outcome. It is true when
 `delta > threshold - near_miss_band` (default band 0.02), the range just below the keep
@@ -348,15 +400,19 @@ Time budget: 120 minutes
 skill-forge/
 ├── SKILL.md                          # Main skill instructions (v3)
 ├── RELEASE_NOTES.md                  # Changelog (v3 + v2)
+├── PLAN-wissen-v1.md                 # Plan for knowledge gaps (phase 1 shipped)
 ├── agents/
 │   ├── hypothesis.md                 # Failure analysis → hypothesis
 │   ├── meta.md                   # Optimizer-side memory, every 5 experiments
 │   ├── mutator.md                    # Hypothesis → file mutation
 │   ├── scorer.md                     # LLM-as-Judge quality scoring
-│   └── orchestrator.md               # Context assembly, handover, checkpoints
+│   ├── orchestrator.md               # Context assembly, handover, checkpoints
+│   └── librarian.md                  # Sourcing from supplied material; may come back empty
 ├── scripts/
 │   ├── __init__.py
-│   └── composite_score.py            # Score, decide, snapshot/revert, TSV, coverage
+│   ├── composite_score.py            # Score, decide, snapshot/revert, TSV, coverage
+│   ├── knowledge.py                  # Gap queue and knowledge vault: sources, claims, gates, verify
+│   └── patterns.py                   # Optimizer-side pattern store: pages, evidence, index
 ├── templates/
 │   ├── morning_report.md             # Report template with coverage matrix
 │   └── agent_context.md              # Runtime context injected into agent prompts
@@ -365,6 +421,7 @@ skill-forge/
 │   └── scheduled_task_template.md    # Cron job setup (both modes)
 ├── examples/
 │   ├── generic-mode-lauf.md          # A real end-to-end generic run, with the guards firing
+│   ├── wissensluecke-lauf.md         # A real end-to-end knowledge run: gap, sourcing, five gates, drift
 │   └── fachbuch-lektorat-session.md  # Real experiment log
 ├── conftest.py                       # Puts the repo root on sys.path for pytest
 ├── tests/
@@ -377,7 +434,10 @@ skill-forge/
 │   ├── test_block2.py                # Resolution, splits, diff, comparison
 │   ├── test_block3.py                # Protected regions, appendix, rejected
 │   ├── test_block4.py                # Token budget, invariants
-│   └── test_review_findings.py       # Every defect the adversarial review found
+│   ├── test_review_findings.py       # Every defect the adversarial review found
+│   ├── test_knowledge.py             # Gap queue, evidence rule, dedupe, DEFERRED
+│   ├── test_knowledge_base.py        # The five gates, source register, verify, budgets
+│   └── test_patterns.py              # Pattern store: evidence, support, index economics
 ├── LICENSE                           # MIT
 └── README.md
 ```
@@ -392,7 +452,12 @@ skill-forge/
 ├── coverage-matrix.json     # Category coverage tracking
 ├── checkpoint.json          # Resume point (on-disk version, applied_but_undecided)
 ├── rejected.jsonl           # Every non-KEEP verbatim, survives compaction
-├── editing-notes.md         # Optimizer-side memory, rewritten every 5 experiments
+├── knowledge-gaps.jsonl     # Missing facts as questions, append-only
+├── knowledge-inbox/         # Material supplied by the user
+├── knowledge-usage.json     # Which run read which claims
+├── patterns/                # Optimizer-side memory, uncapped
+│   ├── INDEX.md             #   small, permanently in the agent context
+│   └── P-NNNN__slug.md      #   one page per pattern, read on demand
 ├── snapshots/
 │   ├── pre-exp-001/         # State before exp-001, the baseline
 │   │   ├── manifest.json
@@ -475,7 +540,292 @@ Tracks which categories of improvements have been tried, with saturation detecti
 | **Mutation diversity** | Coverage matrix tracks which categories were tried, with saturation detection |
 | **Eval rotation in train only** | Fresh queries replace the oldest train evals after 5 experiments. val and test stay frozen; changing val forces a re-baseline |
 | **Longitudinal comparison** | `compare` lists regressions individually instead of netting them against improvements |
+| **Transfer set** | An optional second eval set from a different context shows what val and test cannot: adaptation to the one model and setup. Measured and reported, never gated |
 | **Success protection list** | `success_patterns` stop `prune` from removing the sections that carry the passing evals |
+| **No invented facts** | A missing fact is reported as a question, never filled in from model memory. A plausible-sounding invention passes assertions better than a clumsy truth, so the gate would reward it |
+
+### What val and test cannot see
+
+The last row of that table is the one worth spelling out.
+
+The three-way split protects against memorizing the test cases. It does not
+protect against adapting to the one model and the one setup the run happened
+under — train, val and test come from the same distribution and run under the
+same model.
+
+WikiSkill measures what that can produce: skills a smaller model had evolved
+for itself dropped a stronger model on the same task from 50.5% to **18.1%**.
+The cause was low-level workarounds for the smaller model's weaknesses that
+held the stronger one back. The gate cannot see that damage — it measures
+exactly the combination the workaround was built for.
+
+Two countermeasures, neither touching the gate. The mutator must answer, before
+every new rule: *would this rule still be right for a stronger model or a
+different setup, or does it work around a limitation of the current one?* And
+an optional `transfer_evals` set from a different context is scored twice —
+baseline and final — and reported. **It decides nothing**, for the same reason
+the test split decides nothing: what gets optimized against stops measuring
+anything. val rising while transfer falls is the signature of a workaround, and
+the report says so.
+
+To be clear about the source: WikiSkill gates on a single `Dval`, not across
+targets. Its transfer numbers are analysis, not a gatekeeper. Gating across
+several targets would be its own design decision with its own cost (every round
+measures n times) and is deliberately not built here.
+
+## Knowledge gaps
+
+Not every failure is a wording failure. If the skill does not know a publisher's
+citation rule or an internal API's actual signature, no rephrasing fixes it: a
+**fact** is missing, not a behaviour.
+
+The loop detects those cases and does not invent the answer. It asks.
+
+The hypothesis agent classifies each failure pattern in a three-step cascade —
+was the rule already there and ignored (`EXECUTION_LAPSE`), would a perfect
+instruction have been enough or is a fact required (`KNOWLEDGE_GAP`), otherwise
+`SKILL_DEFECT`. Four mechanical markers separate fact from form: the failing
+assertion checks a value rather than a shape, the agent asserted something
+concrete that was wrong, the answers vary across runs, the agent searched and
+found nothing. In genuine doubt it is never a knowledge gap — that branch is the
+expensive one, it interrupts a human and creates maintenance.
+
+A knowledge gap produces no mutation. It produces a question with four fields,
+recorded in `knowledge-gaps.jsonl`, and the experiment ends as `DEFERRED`:
+
+```
+gap-003 [open]
+Question:    Which citation style does publisher X require in running text?
+Evidence:    3/4 train evals with in-text citations fail 'beleg_kurzform'
+Useful answer: One rule, short or full citation, plus the exceptions
+Backed by:   belege-fliesstext, belege-fussnote, belege-tabelle
+```
+
+`answer_shape` is not decoration. It is the difference between a question a human
+answers in thirty seconds and one they dismiss.
+
+**The auto mode does not block on it.** An overnight run cannot ask anyone.
+Blocking would stall the loop; answering itself would invent facts. `DEFERRED` is
+the third way: the question is asked and written down, and the loop keeps working
+on wording and determinism. So the run delivers a better skill *and* a short list
+of precise questions that take five minutes to answer in the morning.
+
+Rules the script enforces, not the prompt: at least two train evals must show the
+pattern (`eval_ids`, not a counter); one gap per experiment; a cap per run
+(`max_deferred_per_run`, default 3) after which `knowledge` is deprioritized; no
+question twice, and a rejected one stays blocked. A question already `answered`
+whose failure pattern returns is not a knowledge gap — the knowledge is not
+reaching the agent, which is a `SKILL_DEFECT`.
+
+`DEFERRED` is filtered out of the plateau window rather than counted as a
+non-KEEP. Counting it would end a run over unanswered questions although no
+hypothesis failed; letting it break the streak would make one question every
+three rounds suppress plateau detection entirely.
+
+### Two tracks
+
+Knowledge does not fit the gate the rest of the loop runs on, for a fundamental
+reason:
+
+> Whether a wording is better is decided by measurement. Whether a fact is true
+> is decided by its source. An eval score is not a truth criterion.
+
+A properly sourced statement that happens to move nothing in the current eval
+set is still true and belongs in the vault. An invented one that raises the
+score does not. So the two are separated:
+
+| | Track A — content | Track B — pointer |
+|---|---|---|
+| **What** | The claims in the vault | The rule in SKILL.md pointing at the vault |
+| **Gatekeeper** | Provenance, leak, injection, secrets, near-duplicate | The normal gate: `decide`, KEEP/REVERT on val |
+| **Decided by** | `knowledge.py`, and a human when in doubt | The composite score |
+
+Track B is an ordinary mutation. It answers the measurable question — *does
+pointing the agent at the vault help?* Track A answers the one a score cannot —
+*is what it says true?*
+
+### The vault
+
+It lives with the **target skill**, not in the workspace: knowledge the skill
+needs belongs to the skill and travels with it. In the workspace it would stay
+behind with the optimizer, and the skill you hand over would know nothing again.
+
+```
+<target-skill>/
+├── SKILL.md              ← + FORGE_KNOWLEDGE region (the pointer, ~4 lines)
+└── knowledge/
+    ├── INDEX.md          ← routing map. Small, permanently in context
+    ├── SOURCES.md        ← register: id, title, date, SHA-256, trust, rights
+    ├── sources/          ← copies of sources cleared for full text
+    └── pages/<slug>.md   ← claims, read only on demand
+```
+
+Format and id prefixes are a subset of the SkillSafe knowledge vault (`C-nnnn`
+claim, `S-nnnn` source) and stay compatible with it: a vault produced here can
+later be ingested into a real one without rewriting. The concept is adopted, not
+the code — SkillSafe is not a dependency.
+
+### Five gates before every claim
+
+All in `scripts/knowledge.py`, none as a bullet on a prompt checklist — for the
+same reason `verify-regions` runs in Python: asking an agent that broke a rule
+whether it kept the rule is circular.
+
+| Gate | Checks | Why |
+|---|---|---|
+| **Provenance** | Registered source **and** a passage | A source without a passage is not a citation in a 300-page document, it is an assertion |
+| **Leak** | 8-word windows against val and test evals | Otherwise the loop writes the expected answers in as "knowledge", val rises, and nothing generalizes |
+| **Injection** | Imperatives aimed at the system | Sources are data, never instructions |
+| **Secrets** | Credentials as a **value**, not as a word | The vault ships with the skill. The word "password" is fine, a token is not |
+| **Near-duplicate** | Nearly the same statement, different content | Stops silently overwriting sourced knowledge |
+
+The last one comes with an honest caveat: it is **not** semantic contradiction
+detection and could not be. It catches "same entity, different number" and not
+the subtle case. The exit is still right, because the alternative — a silent
+overwrite — loses sourced knowledge without a trace. To really replace a claim,
+pass `--supersedes C-nnnn`: the old one becomes `veraltet`, not deleted.
+
+### What is already in the vault is not a gap
+
+A fact supplied at wizard time never went through the gap queue, so deduping by
+question does not catch it. Without a further guard this loops: the hypothesis
+agent reports a gap, the librarian finds the answer in the vault where it
+already was, `claim-add` rejects it as a near-duplicate — a round burned, and
+the real cause stays hidden.
+
+Two layers prevent it. The vault **index sits in the agent context**, so the
+hypothesis agent can see which topics are covered — that is the actual
+decision. And `gap-append --skill` searches the vault and exits 3 when the
+question is covered — the mechanical backstop.
+
+The threshold is deliberately high, and the asymmetry is the design. A false
+"covered" means the gap is never reported and the missing fact never acquired —
+a permanent blind spot. A false "not covered" costs one round. The second error
+is recoverable, the first is not.
+
+### What a passing eval still proves
+
+The agent reads the vault **in the train runs too**, which changes what the
+results establish, in both directions. A *passing* train eval whose run read
+claims does not show the skill is good — the fact may have come from the vault,
+and such runs must not become `success_patterns`, the protection list that
+stops the mutator from pruning. A *failing* eval whose run read the relevant
+claim is not a knowledge gap — the knowledge was there and did not carry.
+
+Neither case is distinguishable from its opposite without attribution, so
+`usage-update` scans the transcripts for claim ids and page slugs after each
+experiment. It is a lower bound, not a measurement: an agent that reads a page
+and quotes nothing does not show up. For the two rules above that is enough.
+
+WikiSkill ([arXiv:2608.27454](https://arxiv.org/abs/2608.27454)) measures that
+giving the agent wiki access during training rollouts *lowers* final skill
+quality, because the trajectories say less about the skill. But their wiki holds
+*procedures* meant to be compiled into the skill; our vault holds *facts* the
+agent needs at runtime and cannot derive — switching it off would make the train
+runs unrealistic. So we adopt the consequence rather than the remedy: the
+results have to know whether the vault helped.
+
+Phases 1 and 2 are shipped, plus source drift, supersession and usage tracking
+from phase 4. Still open: searching approved external sources, prune proposals,
+and the upgrade path to a real SkillSafe vault — see `PLAN-wissen-v1.md`.
+
+### Maintenance
+
+`knowledge.py verify` checks structure, provenance and source drift, with three
+levels that are the actual content of the command: **errors** (a claim without a
+registered source, a duplicate id — the vault is untrustworthy), **stale** (the
+source is reachable and changed, so the claims describe a state that no longer
+exists — nothing is updated automatically, because what changed in substance is
+not an arithmetic problem), and **warnings** (a `verweis` source whose path is
+missing on this machine — not verifiable, but not wrong; failing closed here
+would turn every handed-over skill red on arrival).
+
+### Pruning suggests, it does not delete
+
+`prune-suggest` lists claims never read across `knowledge_stale_experiments`
+(default 20) experiments. The loop deletes nothing in auto mode, and the
+command writes nothing.
+
+The asymmetry: a claim wrongly kept costs a few tokens in a generously sized
+budget. A claim wrongly deleted costs its source, its passage and the work of
+acquiring it — and it is missing precisely when the rare case arrives that it
+was taken in for. That is what a vault is maintained for.
+
+Non-use is also a weak signal. It can mean the claim is superfluous. It can
+equally mean the evals do not cover its topic, or the index does not surface
+it — and deleting fixes neither. The report names all three readings so the
+decision is an informed one.
+
+### Two budgets
+
+`INDEX.md` counts against the strict `token_budget` because it sits in context
+on every run; the pages count against a separate `knowledge_budget` because they
+are read only when the index points at them. With a single budget,
+`artifact-stats` would trip after a handful of claims and force the orchestrator
+into `forced_category: efficiency` — the loop would start pruning away the
+knowledge it had just acquired.
+
+## The optimizer's own memory
+
+Until v3 this was a file of eight bullets, rewritten from scratch every five
+experiments. The cap kept the context small; the price was that every insight
+fell out after two rounds at the latest, and at the end of a run nothing
+remained for the next one to build on.
+
+WikiSkill's ablation measures that difference: persistent optimizer-side
+knowledge, refined across iterations, is worth **+15.0 points** on average
+across four benchmarks (48.7% → 63.7%) — the single largest effect in their
+paper.
+
+The store is now uncapped. What makes that affordable is one separation:
+
+> Only `patterns/INDEX.md` sits in the context. A page is read individually,
+> with `patterns.py show`, when its title matches the question.
+
+Twenty patterns cost under 1200 tokens permanently. That puts a demand on the
+meta agent: **the title is the most important line of a page**, because it
+decides whether the page is ever opened.
+
+Two rules keep an uncapped store from turning into noise. **Evidence is
+programmatic, interpretation is the agent's** — the orchestrator appends the
+outcome from `decision.json`, since an agent that writes its own support count
+is citing itself. And **mistakes stay readable**: a pattern contradicted by a
+later experiment is marked `widerlegt` with the experiment that did it, not
+deleted, so the same wrong turn is not rediscovered three rounds later.
+
+## Why the skill looks like this
+
+The optimized skill gets a `PURPOSE.md` beside its `SKILL.md`: one entry per
+kept change, with the rejected attempts in the same category that preceded it.
+The labels are German, like the rest of what the loop writes for itself.
+
+```markdown
+## exp-005 — examples — example_add — 2026-09-19
+
+**Hypothese:** Beispiel für Edge-Case X hinzugefügt
+**Abschnitt:** ## Workflow
+**Score:** 0.7200 → 0.7900 (+0.0700)
+
+Vorher verworfen in derselben Kategorie:
+- exp-002 instruction_edit NEUTRAL (-0.0050) — Regel umformuliert
+- exp-004 instruction_edit NEUTRAL (+0.0100) — Regel verschärft
+```
+
+The same information lives in `history.json` and `rejected.jsonl` — but those
+stay in the workspace. Once the skill is handed over, nobody can see why a
+section exists or which more obvious version already failed. Each rejected
+attempt is attributed exactly once, to the next kept change after it. The file
+does not count against `token_budget`: the agent never reads it at runtime.
+
+**And a later run reads it back.** When a skill arrives with a `PURPOSE.md`,
+step 2.5 of the wizard renders it into the hypothesis agent's context with
+`purpose-format`, so the run starts knowing what has already been tried here
+instead of walking into the same dead ends. The block marks itself as weaker
+evidence than the run's own history — those earlier runs may have had a
+different eval set, a different model and a different baseline — so an approach
+that failed there is worth a second try when the current evidence argues for
+it. It is also foreign text from someone else's artifact, so markdown structure
+in it is defused: it is data, not instructions.
 
 ## Crash recovery
 
@@ -510,6 +860,7 @@ file against a baseline it no longer matches.
 | `time_budget_minutes` | 120 | Time budget (for scheduled tasks) |
 | `split_ratio` | 0.50/0.25/0.25 | train/val/test ratio (Skill Mode) |
 | `split_seed` | 42 | Seed of the hash assignment. Changing it moves every eval and forces a re-baseline |
+| `transfer_evals` | null | Optional second eval set from a different context. Measured twice and reported, never gated |
 | `min_evals` | 6 | Below this the wizard refuses to start |
 | `min_evals_for_test` | 12 | Below this there is no test split |
 | `resolution` | (computed) | `2 / N_assertions`, a lower bound on the keep threshold |
@@ -526,8 +877,17 @@ file against a baseline it no longer matches.
 | `invariant_command` | null | Must still exit 0 after every mutation |
 | `min_scope_ratio` | 0.9 | Floor against "measuring less is not an improvement" |
 | `max_scope_files` | 200 | Upper bound on the scope glob |
-| `meta_memory_interval` | 5 | How often `editing-notes.md` is rewritten |
-| `meta_memory_max_bullets` | 8 | Cap on the meta notes |
+| `meta_memory_interval` | 5 | How often the meta agent runs |
+| `pattern_min_support` | 2 | Measured evidence rows before a pattern stops being `vorläufig` |
+| `max_knowledge_gaps_per_experiment` | 1 | How many knowledge gaps one round may report |
+| `max_deferred_per_run` | 3 | How often a run may answer with a question instead of a mutation before `knowledge` is deprioritized |
+| `gap_limit` | 10 | How many open questions go into the agent prompt |
+| `knowledge_enabled` | true | Detection of knowledge gaps. Needs no sources; `false` disables `KNOWLEDGE_GAP` classification |
+| `knowledge_sources_provided` | false | Whether the librarian has anything to read. Gates sourcing, not detection |
+| `knowledge_inbox` | `<workspace>/knowledge-inbox` | Raw material supplied by the user |
+| `knowledge_budget` | `4 × token_budget` | Cap on `knowledge/pages/`, separate from the strict budget |
+| `vault_coverage_threshold` | 0.6 | Coverage at which `gap-append` rejects a question the vault already answers |
+| `knowledge_stale_experiments` | 20 | Experiments without a read before a claim becomes a prune suggestion |
 
 ## Tests
 
@@ -535,10 +895,10 @@ file against a baseline it no longer matches.
 python3 -m pytest tests/ -q
 ```
 
-283 tests across ten files. They cover the decision cascade and its threshold edge cases,
+410 tests across thirteen files. They cover the decision cascade and its threshold edge cases,
 gate scoring and `--side`, the three-way split, diff and comparison, protected regions and
 the appendix, the rejected buffer, the token budget, the invariant checks, generic mode,
-and every CLI exit code.
+and every CLI exit code, plus the knowledge-gap queue, the `DEFERRED` path, and the five gates guarding the vault.
 
 `test_review_findings.py` is the interesting one: it pins every defect the two adversarial
 review rounds found in this code, plus the blind spots a mutation test over 69 targeted
