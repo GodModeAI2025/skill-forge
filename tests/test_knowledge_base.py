@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from scripts.knowledge import (
+    VAULT_COVERAGE_THRESHOLD,
     add_claims,
     add_source,
     all_claims,
@@ -24,8 +25,14 @@ from scripts.knowledge import (
     leak_check,
     near_duplicates,
     ngrams,
+    append_gap,
+    format_usage,
     parse_frontmatter,
     read_sources,
+    scan_transcripts,
+    search_vault,
+    update_usage,
+    vault_covers,
     scan_injection,
     scan_secrets,
     verify_knowledge,
@@ -446,3 +453,222 @@ def test_cli_source_add_refuses_a_missing_file(skill):
 def test_cli_init_needs_a_real_skill(tmp_path):
     result = run("init", str(tmp_path / "fehlt" / "SKILL.md"))
     assert result.returncode == 1
+
+
+# ─── Retrieval: deckt der Bestand die Frage schon? ────────────────────────
+
+
+def test_a_question_the_vault_already_answers_creates_no_gap(skill, tmp_path):
+    """Der Fehler, den erst die WikiSkill-Ablation sichtbar gemacht hat.
+
+    Ein Fakt, den der User beim Wizard eingelegt hat, ging nie durch die
+    Gap-Queue — die Dedup-Prüfung über die Frage greift also nicht. Ohne
+    Bestands-Check meldet der Hypothesis-Agent eine Lücke, der Librarian
+    findet die Antwort im Bestand, wo sie schon war, und claim-add weist sie
+    als Near-Duplicate ab. Eine Runde verbrannt, und die eigentliche Ursache
+    (der Agent hat den Bestand nicht konsultiert) bleibt unerkannt.
+    """
+    write(skill, claim("Im Fliesstext steht der Kurzbeleg mit Autor und Seite."),
+          title="Belegregeln Verlag X", stichworte=["belegstil"])
+    gaps = str(tmp_path / "gaps.jsonl")
+
+    result = append_gap(
+        gaps, question="Welchen Belegstil verlangt der Verlag im Fliesstext?",
+        why_needed="3/4 train-Evals failen", answer_shape="Eine Regel",
+        eval_ids=["a", "b"], skill_path=skill["path"],
+    )
+    assert result["created"] is False
+    assert result["covered_by_vault"] is True
+    assert result["coverage"]["candidates"][0]["claim_id"] == "C-0001"
+    assert not Path(gaps).exists(), "keine Zeile geschrieben"
+
+
+def test_a_real_gap_still_gets_through(skill, tmp_path):
+    write(skill, claim("Im Fliesstext steht der Kurzbeleg."))
+    result = append_gap(
+        str(tmp_path / "gaps.jsonl"),
+        question="Welche Kuendigungsfrist gilt fuer Autorenvertraege?",
+        why_needed="2/4 train-Evals failen", answer_shape="Eine Frist",
+        eval_ids=["c", "d"], skill_path=skill["path"],
+    )
+    assert result["created"] is True
+
+
+def test_the_backstop_misses_when_the_page_never_names_the_entity(skill, tmp_path):
+    """Eine bewusst festgehaltene Grenze, kein Versehen.
+
+    Fragt jemand nach "dem Verlag" und die Seite sagt nirgends "Verlag", gilt
+    die Frage als ungedeckt — der Bestand belegt dann tatsächlich nicht, dass
+    er von diesem Verlag handelt. Die Lücke wird gemeldet, eine Runde geht
+    dafür drauf, und der Librarian klärt es.
+
+    Genau so herum ist es gewollt: diese Prüfung ist die Rückfallebene, nicht
+    die Entscheidung. Die trifft der Hypothesis-Agent, der den Bestandsindex
+    in seinem Kontext sieht. Eine Schwelle, die hier zuschlüge, schlüge auch
+    dort zu, wo das Wissen wirklich fehlt — und das bliebe unbemerkt.
+    """
+    write(skill, claim("Im Fliesstext steht der Kurzbeleg mit Autor und Seite."),
+          stichworte=["belegstil"])
+    coverage = vault_covers(
+        skill["path"], "Welchen Belegstil verlangt der Verlag im Fliesstext?"
+    )
+    assert coverage["covered"] is False
+    assert coverage["candidates"], "als Kandidat taucht der Claim trotzdem auf"
+
+
+def test_without_a_skill_path_the_check_is_skipped(skill, tmp_path):
+    """Sichtbar übersprungen, nicht still: ohne --skill gibt es kein Feld."""
+    write(skill, claim("Im Fliesstext steht der Kurzbeleg mit Autor und Seite."),
+          title="Belegregeln Verlag X", stichworte=["belegstil"])
+    result = append_gap(
+        str(tmp_path / "gaps.jsonl"),
+        question="Welchen Belegstil verlangt der Verlag im Fliesstext?",
+        why_needed="x", answer_shape="y", eval_ids=["a", "b"],
+    )
+    assert result["created"] is True
+    assert "covered_by_vault" not in result
+
+
+def test_coverage_is_biased_toward_asking(skill):
+    """Die Asymmetrie hat einen Grund und wird hier festgenagelt.
+
+    Ein falsches 'gedeckt' heisst: die Lücke wird nie gemeldet, die fehlende
+    Tatsache nie beschafft — ein dauerhafter blinder Fleck. Ein falsches
+    'nicht gedeckt' kostet eine Runde. Der zweite Fehler ist erholbar.
+    """
+    write(skill, claim("Im Fliesstext steht der Kurzbeleg mit Autor und Seite."))
+    schwach = vault_covers(
+        skill["path"], "Welche Frist gilt bei Widerspruch gegen Belege?"
+    )
+    assert schwach["covered"] is False
+    assert schwach["best_score"] < VAULT_COVERAGE_THRESHOLD
+
+
+def test_a_superseded_claim_does_not_cover_a_question(skill):
+    """Sonst deckt eine veraltete Antwort die Frage nach der neuen zu."""
+    write(skill, claim("Die Frist betraegt vierzehn Tage nach Zugang."))
+    write(skill, claim("Die Frist betraegt dreissig Tage nach Zugang."),
+          allow_near_duplicate=True, supersedes=["C-0001"])
+    hits = search_vault(skill["path"], "Wie lang ist die Frist nach Zugang?")
+    assert [h["claim_id"] for h in hits] == ["C-0002"]
+
+
+def test_question_words_do_not_drive_the_match(skill):
+    """'welche', 'gilt' und Co. stehen in fast jeder Wissensfrage."""
+    write(skill, claim("Ein voellig anderes Thema ohne Bezug zur Anfrage."))
+    assert vault_covers(skill["path"], "Welche Regel gilt hier?")["covered"] is False
+
+
+def test_an_empty_vault_covers_nothing(skill):
+    assert vault_covers(skill["path"], "Welchen Belegstil?")["covered"] is False
+
+
+# ─── Nutzungsverfolgung ───────────────────────────────────────────────────
+
+
+def _transcript(exp_dir, eval_id, side, text):
+    path = Path(exp_dir) / "runs" / eval_id / side
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "transcript.txt").write_text(text, encoding="utf-8")
+
+
+def test_usage_attributes_claims_to_runs(skill, tmp_path):
+    """Die Zuordnung, ohne die die Klassifikation rät.
+
+    Ein bestandener train-Eval, dessen Run den Bestand gelesen hat, belegt
+    nicht, dass der Skill gut ist.
+    """
+    write(skill, claim("Im Fliesstext steht der Kurzbeleg."))
+    write(skill, claim("Ein zweiter, ganz anderer Sachverhalt aus dem Leitfaden."))
+    exp = tmp_path / "exp-004"
+    _transcript(exp, "eval-0", "with_mutation",
+                "Ich lese knowledge/pages/belegregeln.md ... laut C-0001 gilt ...")
+    _transcript(exp, "eval-0", "baseline", "Kein Bestandszugriff hier.")
+    _transcript(exp, "eval-1", "with_mutation", "Auch hier zaehlt C-0001.")
+
+    usage = update_usage(str(tmp_path / "usage.json"), skill["path"],
+                         str(exp), "exp-004")
+    latest = usage["experiments"][-1]
+    assert latest["claims_used"] == {"C-0001": 2}
+    runs = {(r["eval"], r["side"]): r for r in latest["runs"]}
+    assert runs[("eval-0", "with_mutation")]["claims"] == ["C-0001"]
+    assert runs[("eval-0", "with_mutation")]["pages"] == ["belegregeln"]
+    assert ("eval-0", "baseline") not in runs, "ohne Treffer kein Eintrag"
+
+
+def test_never_used_claims_are_tracked_for_pruning(skill, tmp_path):
+    write(skill, claim("Im Fliesstext steht der Kurzbeleg."))
+    write(skill, claim("Ein zweiter, ganz anderer Sachverhalt aus dem Leitfaden."))
+    exp = tmp_path / "exp-004"
+    _transcript(exp, "eval-0", "with_mutation", "laut C-0001 gilt ...")
+
+    usage = update_usage(str(tmp_path / "usage.json"), skill["path"],
+                         str(exp), "exp-004")
+    assert usage["never_used"] == ["C-0002"]
+    assert usage["totals"]["C-0001"]["uses"] == 1
+    assert usage["totals"]["C-0002"]["experiments_since_use"] == 1
+
+
+def test_rerunning_an_experiment_replaces_its_entry(skill, tmp_path):
+    """Sonst zählt ein Resume denselben Lauf doppelt."""
+    write(skill, claim("Im Fliesstext steht der Kurzbeleg."))
+    exp = tmp_path / "exp-004"
+    _transcript(exp, "eval-0", "with_mutation", "C-0001")
+    path = str(tmp_path / "usage.json")
+    update_usage(path, skill["path"], str(exp), "exp-004")
+    usage = update_usage(path, skill["path"], str(exp), "exp-004")
+    assert len(usage["experiments"]) == 1
+    assert usage["totals"]["C-0001"]["uses"] == 1
+
+
+def test_a_claim_id_outside_the_vault_is_reported(skill, tmp_path):
+    """Ein Transcript, das C-0099 nennt, meint nicht diesen Bestand."""
+    write(skill, claim("Im Fliesstext steht der Kurzbeleg."))
+    exp = tmp_path / "exp-004"
+    _transcript(exp, "eval-0", "with_mutation", "laut C-0099 gilt etwas anderes")
+    scan = scan_transcripts(skill["path"], str(exp))
+    assert scan["claims_unknown"] == ["C-0099"]
+
+
+def test_the_usage_block_carries_the_two_reading_rules(skill, tmp_path):
+    write(skill, claim("Im Fliesstext steht der Kurzbeleg."))
+    exp = tmp_path / "exp-004"
+    _transcript(exp, "eval-0", "with_mutation", "C-0001")
+    path = str(tmp_path / "usage.json")
+    update_usage(path, skill["path"], str(exp), "exp-004")
+    block = format_usage(path)
+    assert "belegt NICHT" in block
+    assert "SKILL_DEFECT" in block
+    assert "eval-0" in block
+
+
+def test_an_empty_usage_file_formats_to_nothing(tmp_path):
+    assert format_usage(str(tmp_path / "fehlt.json")) == ""
+
+
+# ─── CLI ──────────────────────────────────────────────────────────────────
+
+
+def test_cli_gap_append_exits_three_when_the_vault_covers_it(skill, tmp_path):
+    """Exit 3, damit der Aufrufer es nicht mit einem Duplikat verwechselt."""
+    write(skill, claim("Im Fliesstext steht der Kurzbeleg mit Autor und Seite."),
+          title="Belegregeln Verlag X", stichworte=["belegstil"])
+    result = run(
+        "gap-append", str(tmp_path / "gaps.jsonl"),
+        "--question", "Welchen Belegstil verlangt der Verlag im Fliesstext?",
+        "--why-needed", "3/4 train-Evals failen",
+        "--answer-shape", "Eine Regel",
+        "--eval-id", "a", "--eval-id", "b",
+        "--skill", skill["path"],
+    )
+    assert result.returncode == 3
+    assert json.loads(result.stdout)["covered_by_vault"] is True
+
+
+def test_cli_search_exit_code_signals_coverage(skill):
+    write(skill, claim("Im Fliesstext steht der Kurzbeleg mit Autor und Seite."),
+          title="Belegregeln Verlag X", stichworte=["belegstil"])
+    assert run("search", skill["path"],
+               "Welchen Belegstil verlangt der Verlag im Fliesstext?").returncode == 0
+    assert run("search", skill["path"],
+               "Wie hoch ist die Verguetung pro Druckbogen?").returncode == 1

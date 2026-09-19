@@ -28,7 +28,13 @@ Vor jedem Agent-Aufruf:
    `python3 scripts/knowledge.py gap-format <workspace>/knowledge-gaps.jsonl --limit 10`
    Ohne diesen Block stellt der Hypothesis-Agent jede Nacht dieselbe Frage und
    verbraucht den DEFERRED-Deckel mit Duplikaten.
-6. Hänge den gefüllten Context an den Agent-Prompt an
+6. Lege den Bestandsindex bei, falls einer existiert: den Inhalt von
+   `<ziel-skill>/knowledge/INDEX.md`. Ohne ihn kann der Hypothesis-Agent nicht
+   sehen, dass eine Tatsache schon im Bestand liegt, und meldet sie als Lücke.
+   Der Index ist klein und dafür gebaut, permanent im Kontext zu liegen.
+7. Lege die Bestandsnutzung bei:
+   `python3 scripts/knowledge.py usage-format <workspace>/knowledge-usage.json`
+8. Hänge den gefüllten Context an den Agent-Prompt an
 
 ### 2. Agent-Übergabe-Protokoll
 
@@ -185,13 +191,25 @@ nichts. Ablauf, in dieser Reihenfolge:
 ```bash
 python3 scripts/knowledge.py gap-append <workspace>/knowledge-gaps.jsonl \
   --from-json <workspace>/experiments/exp-<NNN>/hypothesis.json \
-  --experiment exp-<NNN>
+  --experiment exp-<NNN> --skill <ziel-SKILL.md>
 ```
+
+   `--skill` gehört dazu, sobald ein Bestand existiert. Der Befehl durchsucht
+   ihn, bevor er eine Lücke anlegt.
 
    Exit 1 heisst: die Frage erfüllt die Belegpflicht nicht (unter zwei
    `eval_ids` ohne begründete Ausnahme) oder ein Pflichtfeld fehlt. Dann ist
    die Entscheidung `SKIP`, nicht `DEFERRED` — es liegt keine brauchbare Frage
    vor, die der Mensch morgens beantworten könnte.
+
+   **Exit 3 heisst: der Bestand deckt die Frage bereits.** Keine Lücke, kein
+   Librarian, kein `DEFERRED`. Die Tatsache ist da und erreicht den Agenten
+   nicht — das ist ein `SKILL_DEFECT` auf den Verweis. Schicke die Hypothese
+   mit dieser Korrektur und den Kandidaten aus dem Feld `coverage` zurück an
+   den Hypothesis-Agenten (ein Retry) und behandle die Runde als normales
+   Experiment. Ohne diesen Zweig entsteht eine Schleife: Lücke gemeldet,
+   Librarian findet die Antwort im Bestand, `claim-add` weist sie als
+   Near-Duplicate ab, Runde verbrannt.
 
 2. Ist `created: false` und `unresolved: true`, war die Frage schon gestellt.
    Keine neue Zeile, keine neue Entscheidung: zurück zur nächsten Hypothese.
@@ -256,6 +274,28 @@ python3 scripts/composite_score.py coverage-update <workspace>/coverage-matrix.j
    unbeantwortete Fragen, nicht erfolgreiche Beschaffungen.
 
 7. Weiter mit der nächsten Hypothese. Der Lauf endet deswegen nicht.
+
+### 4.7. Bestandsnutzung erfassen
+
+Nach jedem Skill-Modus-Experiment mit Wissensbestand, vor der Context Assembly
+der nächsten Runde:
+
+```bash
+python3 scripts/knowledge.py usage-update <workspace>/knowledge-usage.json \
+  --skill <ziel-SKILL.md> \
+  --experiment-dir <workspace>/experiments/exp-<NNN> \
+  --experiment exp-<NNN>
+```
+
+Scannt die Transcripts nach Claim-IDs und Seiten-Slugs und ordnet sie Eval und
+Seite zu. Das ist die Grundlage der beiden Leseregeln in `agents/hypothesis.md`
+Abschnitt 2b-bis — ohne sie kann der Hypothesis-Agent einen Erfolg aus dem
+Bestand nicht von einem Erfolg aus dem Skill unterscheiden und leitet
+`success_patterns` aus Bestandstreffern ab.
+
+Das Feld `never_used` sammelt nebenbei die Claims, die über den Lauf nie
+gelesen wurden. Sie gehören als Prune-Vorschlag in den Report; gelöscht wird
+nichts automatisch.
 
 ### 5. Checkpoint-Management
 

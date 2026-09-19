@@ -171,6 +171,27 @@ Fehleranalysator ist ein monotoner Regelanhäufer ohne Vergessensmechanismus.
 Nur train. Die bestandenen val- und test-Evals siehst du nicht, sonst leckt der
 Holdout über diesen Block ins Skill.
 
+### 2b-bis. Bestandsnutzung berücksichtigen
+
+Liegt ein Wissensbestand vor, liest der Agent ihn **auch in den train-Runs**.
+Das verändert, was die Ergebnisse belegen, und zwar in beide Richtungen. Der
+Abschnitt "Bestandsnutzung" in deinem Kontext (aus
+`knowledge.py usage-format`) sagt dir pro Run, welche Claims gelesen wurden.
+Zwei Regeln:
+
+1. **Ein bestandener train-Eval, dessen Run Claims gelesen hat, belegt nicht,
+   dass der Skill gut ist.** Die Tatsache kam womöglich aus dem Bestand, nicht
+   aus einer Anweisung. Solche Runs taugen nicht als `success_patterns` — und
+   `success_patterns` sind die Schutzliste, die den Mutator vom Prunen abhält.
+   Eine Schutzliste aus Bestandstreffern schützt die falschen Abschnitte.
+2. **Ein gescheiterter Eval, dessen Run den passenden Claim gelesen hat, ist
+   keine Wissenslücke.** Das Wissen war da und hat nicht getragen. Das ist ein
+   `SKILL_DEFECT` auf den Verweis oder auf die Anwendung, und eine erneute
+   Beschaffung würde nichts ändern.
+
+Fehlt der Abschnitt, gibt es keinen Bestand oder keine Transcripts. Dann gelten
+die Ergebnisse wie bisher.
+
 ### 2c. Fehlerklassifikation: Lapse, Wissenslücke, Defekt
 
 Klassifiziere JEDES Failure-Pattern, bevor du nach der Ursache suchst. Drei
@@ -204,6 +225,10 @@ Je mehr zutreffen, desto eher `KNOWLEDGE_GAP`:
 3. Die Antworten **streuen über Runs**: derselbe Prompt, drei verschiedene
    erfundene Werte. Ein Formfehler ist stabil, eine Wissenslücke würfelt.
 4. Der Agent hat im Transcript **gesucht** und nichts gefunden.
+
+**Vorbedingung für `KNOWLEDGE_GAP`: die Tatsache steht nicht schon im
+Bestand.** Weder als Claim noch als Thema im Index, und der Run hat sie nicht
+gelesen (Abschnitt 2b-bis). Ist sie da, ist es ein `SKILL_DEFECT`.
 
 **Bei echter Unsicherheit: nie `KNOWLEDGE_GAP`.** Der Default ist doppelt
 asymmetrisch — gegen Wissenslücke und, wie bisher, zugunsten von
@@ -244,8 +269,20 @@ die der Mensch morgens in dreissig Sekunden beantwortet, und einer, die er
 wegklickt. "Eine Regel: Kurzbeleg oder Vollbeleg, plus Ausnahmen" ist
 brauchbar; "Infos zum Zitierstil" ist es nicht.
 
-**Prüfe zuerst die Liste offener Fragen** in deinem Kontext (Abschnitt
-"Offene Wissensfragen", gerendert aus `knowledge-gaps.jsonl`). Drei Fälle:
+**Prüfe zuerst den Wissensbestand** (Abschnitt "Wissensbestand" in deinem
+Kontext, der Inhalt von `knowledge/INDEX.md`). Steht das Thema dort, liegt die
+Tatsache schon im Bestand — dann fehlt nicht das Wissen, sondern der Weg
+dorthin. Das ist ein `SKILL_DEFECT`, und die Mutation richtet sich auf die
+Stelle, an der der Agent auf den Bestand gestossen werden müsste.
+
+`scripts/knowledge.py` weist eine gedeckte Frage zusätzlich mechanisch ab
+(`gap-append --skill`, Exit 3). Verlass dich nicht darauf: die Sperre greift
+erst bei deutlicher Wortüberschneidung und ist bewusst konservativ, weil ein
+falsches "gedeckt" eine echte Lücke für immer verschwinden liesse. Die
+Entscheidung liegt bei dir, die Sperre ist die Rückfallebene.
+
+**Prüfe dann die Liste offener Fragen** (Abschnitt "Offene Wissensfragen",
+gerendert aus `knowledge-gaps.jsonl`). Drei Fälle:
 
 - Die Frage steht dort als `open` oder `conflict` → stelle sie nicht erneut.
   Wähle einen anderen Kandidaten.

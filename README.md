@@ -225,6 +225,9 @@ a list of open questions, and the two fail in different ways.
 | `index` | Regenerates `INDEX.md` deterministically |
 | `stats --budget` | Vault size, index counted separately from the pages |
 | `leak-check --evals` | Scans the whole vault against the val and test splits |
+| `search` | Does the vault already answer this question? Exit 0 = yes |
+| `usage-update` | Records from the transcripts which run read which claims |
+| `usage-format` | The usage block rendered into the hypothesis agent's context |
 
 ### The six agents
 
@@ -429,6 +432,7 @@ skill-forge/
 ├── rejected.jsonl           # Every non-KEEP verbatim, survives compaction
 ├── knowledge-gaps.jsonl     # Missing facts as questions, append-only
 ├── knowledge-inbox/         # Material supplied by the user
+├── knowledge-usage.json     # Which run read which claims
 ├── editing-notes.md         # Optimizer-side memory, rewritten every 5 experiments
 ├── snapshots/
 │   ├── pre-exp-001/         # State before exp-001, the baseline
@@ -647,10 +651,49 @@ are read only when the index points at them. With a single budget,
 into `forced_category: efficiency` — the loop would start pruning away the
 knowledge it had just acquired.
 
-Phases 1 and 2 are shipped, plus the source-drift and supersession parts of
-phase 4. Still open: searching approved external sources, usage tracking from
-transcripts, prune proposals, and the upgrade path to a real SkillSafe vault —
-see `PLAN-wissen-v1.md`.
+### What is already in the vault is not a gap
+
+A fact supplied at wizard time never went through the gap queue, so deduping by
+question does not catch it. Without a further guard this loops: the hypothesis
+agent reports a gap, the librarian finds the answer in the vault where it
+already was, `claim-add` rejects it as a near-duplicate — a round burned, and
+the real cause stays hidden.
+
+Two layers prevent it. The vault **index sits in the agent context**, so the
+hypothesis agent can see which topics are covered — that is the actual
+decision. And `gap-append --skill` searches the vault and exits 3 when the
+question is covered — the mechanical backstop.
+
+The threshold is deliberately high, and the asymmetry is the design. A false
+"covered" means the gap is never reported and the missing fact never acquired —
+a permanent blind spot. A false "not covered" costs one round. The second error
+is recoverable, the first is not.
+
+### What a passing eval still proves
+
+The agent reads the vault **in the train runs too**, which changes what the
+results establish, in both directions. A *passing* train eval whose run read
+claims does not show the skill is good — the fact may have come from the vault,
+and such runs must not become `success_patterns`, the protection list that
+stops the mutator from pruning. A *failing* eval whose run read the relevant
+claim is not a knowledge gap — the knowledge was there and did not carry.
+
+Neither case is distinguishable from its opposite without attribution, so
+`usage-update` scans the transcripts for claim ids and page slugs after each
+experiment. It is a lower bound, not a measurement: an agent that reads a page
+and quotes nothing does not show up. For the two rules above that is enough.
+
+WikiSkill ([arXiv:2608.27454](https://arxiv.org/abs/2608.27454)) measures that
+giving the agent wiki access during training rollouts *lowers* final skill
+quality, because the trajectories say less about the skill. But their wiki holds
+*procedures* meant to be compiled into the skill; our vault holds *facts* the
+agent needs at runtime and cannot derive — switching it off would make the train
+runs unrealistic. So we adopt the consequence rather than the remedy: the
+results have to know whether the vault helped.
+
+Phases 1 and 2 are shipped, plus source drift, supersession and usage tracking
+from phase 4. Still open: searching approved external sources, prune proposals,
+and the upgrade path to a real SkillSafe vault — see `PLAN-wissen-v1.md`.
 
 ## Crash recovery
 
@@ -709,6 +752,7 @@ file against a baseline it no longer matches.
 | `knowledge_enabled` | true | Knowledge branch active; `false` disables `KNOWLEDGE_GAP` classification |
 | `knowledge_inbox` | `<workspace>/knowledge-inbox` | Raw material supplied by the user |
 | `knowledge_budget` | `4 × token_budget` | Cap on `knowledge/pages/`, separate from the strict budget |
+| `vault_coverage_threshold` | 0.6 | Coverage at which `gap-append` rejects a question the vault already answers |
 
 ## Tests
 
@@ -716,7 +760,7 @@ file against a baseline it no longer matches.
 python3 -m pytest tests/ -q
 ```
 
-353 tests across twelve files. They cover the decision cascade and its threshold edge cases,
+369 tests across twelve files. They cover the decision cascade and its threshold edge cases,
 gate scoring and `--side`, the three-way split, diff and comparison, protected regions and
 the appendix, the rejected buffer, the token budget, the invariant checks, generic mode,
 and every CLI exit code, plus the knowledge-gap queue, the `DEFERRED` path, and the five gates guarding the vault.

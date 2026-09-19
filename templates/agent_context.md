@@ -40,6 +40,20 @@ Gerendert mit `rejected-format <workspace>/rejected.jsonl --limit 10`. Enthält
 alle Nicht-KEEP-Entscheidungen im Wortlaut, Near-Misses als markierte
 Teilmenge.
 
+## Wissensbestand
+
+{knowledge_index_block}
+
+Der Inhalt von `<ziel-skill>/knowledge/INDEX.md`. Steht ein Thema hier, liegt
+die Tatsache im Bestand: dann fehlt nicht das Wissen, sondern der Weg dorthin,
+und das ist ein `SKILL_DEFECT`, keine Wissenslücke.
+
+## Bestandsnutzung im letzten Experiment
+
+{knowledge_usage_block}
+
+Gerendert mit `knowledge.py usage-format <workspace>/knowledge-usage.json`.
+
 ## Offene Wissensfragen
 
 {knowledge_gaps_block}

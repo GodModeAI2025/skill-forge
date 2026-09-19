@@ -30,7 +30,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 
 # ─── Status ───────────────────────────────────────────────────────────────
@@ -178,8 +178,9 @@ def append_gap(
     domain: str | None = None,
     single_eval_accepted: bool = False,
     generalizability: str = "",
+    skill_path: str | None = None,
 ) -> dict:
-    """Melde eine Wissenslücke, falls sie neu ist.
+    """Melde eine Wissenslücke, falls sie neu ist und der Bestand sie nicht deckt.
 
     Drei Pflichtfelder, und keines davon ist Beiwerk:
 
@@ -195,8 +196,19 @@ def append_gap(
     Lesen nachprüfbar, eine nackte Zahl nicht. Die Ausnahme für einen
     Einzelfall verlangt eine Begründung, sonst ist sie keine.
 
+    Mit ``skill_path`` wird zuerst der Wissensbestand durchsucht. Liegt die
+    Antwort dort schon, wird **keine** Lücke angelegt: dann fehlt nicht das
+    Wissen, sondern der Weg dorthin, und das ist ein SKILL_DEFECT auf den
+    Verweis. Ohne diese Prüfung entsteht eine Schleife — der Hypothesis-Agent
+    meldet die Lücke, der Librarian findet die Antwort im Bestand, wo sie schon
+    war, und ``claim-add`` weist sie als Near-Duplicate ab. Eine Runde
+    verbrannt, und die eigentliche Ursache bleibt unerkannt. Betroffen sind vor
+    allem Fakten, die beim Wizard eingelegt wurden: die sind nie durch die
+    Gap-Queue gegangen, also greift die Dedup-Prüfung über die Frage nicht.
+
     Rückgabe enthält das Flag ``created``. Ist es ``False``, wurde nichts
-    geschrieben und ``status`` sagt, wie der bestehende Eintrag steht. Der
+    geschrieben und ``status`` sagt, wie der bestehende Eintrag steht, bzw.
+    ``covered_by_vault`` markiert den Bestandstreffer. Der
     Zeitstempel im Datensatz heisst ``created_at`` und nicht ``created``: ein
     Schlüssel, der auf der Platte ein Zeitstempel und im Rückgabewert ein
     Boolean ist, liest sich beim Debuggen falsch herum.
@@ -226,6 +238,19 @@ def append_gap(
             )
         if not ids:
             raise ValueError("eval_ids ist leer — auch die Ausnahme braucht einen Beleg.")
+
+    if skill_path:
+        coverage = vault_covers(skill_path, question)
+        if coverage["covered"]:
+            return {
+                "created": False,
+                "duplicate": False,
+                "covered_by_vault": True,
+                "gap_id": None,
+                "status": None,
+                "unresolved": False,
+                "coverage": coverage,
+            }
 
     existing = find_gap(path, question)
     if existing is not None:
@@ -1070,6 +1095,279 @@ def knowledge_stats(skill_path: str, budget: int | None = None,
     return result
 
 
+# ─── Retrieval: liegt die Antwort schon im Bestand? ───────────────────────
+
+# Deterministische Lexik-Suche, kein Embedding. Für Bestände dieser Grösse
+# reicht das, und es hat den entscheidenden Vorteil, nachvollziehbar zu sein:
+# wer wissen will, warum ein Claim als Treffer galt, sieht die geteilten Wörter.
+
+_STOPWORDS = {
+    "aber", "alle", "allem", "allen", "aller", "alles", "als", "also", "andere",
+    "auch", "auf", "aus", "bei", "beim", "bis", "dann", "das", "dass", "dem",
+    "den", "der", "des", "die", "dies", "diese", "diesem", "diesen", "dieser",
+    "dieses", "doch", "dort", "durch", "ein", "eine", "einem", "einen", "einer",
+    "eines", "für", "gegen", "hat", "hier", "ich", "ihr", "immer", "ist", "kann",
+    "man", "mit", "muss", "nach", "nicht", "noch", "nur", "oder", "ohne", "sich",
+    "sie", "sind", "soll", "über", "und", "unter", "vom", "von", "vor", "was",
+    "wenn", "wer", "werden", "wie", "wird", "wo", "zum", "zur",
+    "and", "are", "for", "from", "has", "its", "not", "the", "that", "this",
+    "was", "were", "what", "when", "which", "with",
+    # Fragewörter, die in fast jeder Wissensfrage stehen und nichts trennen
+    "welche", "welchem", "welchen", "welcher", "welches", "wann", "warum",
+    "wieviel", "wieviele", "gilt", "gelten",
+}
+
+# Anteil der Inhaltswörter einer Frage, die in einem Claim vorkommen müssen,
+# damit die Frage als beantwortet gilt. Bewusst hoch: siehe covered_by_vault.
+VAULT_COVERAGE_THRESHOLD = 0.6
+
+
+def content_words(text: str) -> set:
+    """Inhaltswörter: normalisiert, ohne Stoppwörter, ab vier Zeichen."""
+    return {
+        w for w in normalise_question(text).split()
+        if len(w) >= 4 and w not in _STOPWORDS
+    }
+
+
+def search_vault(skill_path: str, query: str, limit: int = 5) -> list:
+    """Claims, die zur Frage passen, absteigend nach Deckungsgrad.
+
+    Der Score ist der Anteil der Inhaltswörter der **Frage**, die im
+    Suchraum eines Claims vorkommen — nicht Jaccard. Ein langer Claim soll
+    nicht dafür bestraft werden, dass er mehr sagt als die Frage fragt.
+
+    Durchsucht werden Claim-Text, Fundstelle, Seitentitel und Stichworte: die
+    Frage nennt oft das Thema ("Belegstil") und der Claim die Sache
+    ("Kurzbeleg"), und die Brücke dazwischen ist die Seite.
+    """
+    wanted = content_words(query)
+    if not wanted:
+        return []
+    pages = {p["slug"]: p for p in read_pages(skill_path)}
+    hits = []
+    for claim in all_claims(skill_path):
+        if claim.get("status") == "veraltet":
+            continue
+        page = pages.get(claim["slug"], {})
+        front = page.get("frontmatter", {})
+        haystack = " ".join([
+            claim["text"], claim.get("fundstelle", ""), claim["slug"],
+            str(front.get("title", "")),
+            " ".join(front.get("stichworte", []) or []),
+            str(front.get("domain", "")),
+        ])
+        shared = wanted & content_words(haystack)
+        if not shared:
+            continue
+        hits.append({
+            "claim_id": claim["claim_id"],
+            "slug": claim["slug"],
+            "source": claim["source"],
+            "score": round(len(shared) / len(wanted), 3),
+            "shared": sorted(shared),
+            "text": claim["text"][:160],
+        })
+    hits.sort(key=lambda h: (-h["score"], h["claim_id"]))
+    return hits[:limit]
+
+
+def vault_covers(skill_path: str, query: str,
+                 threshold: float = VAULT_COVERAGE_THRESHOLD) -> dict:
+    """Prüft, ob der Bestand die Frage schon beantwortet.
+
+    Die Schwelle ist bewusst hoch, und die Asymmetrie hat einen Grund. Ein
+    falsches "gedeckt" heisst: die Lücke wird nie gemeldet, die fehlende
+    Tatsache nie beschafft — ein dauerhafter blinder Fleck. Ein falsches
+    "nicht gedeckt" kostet eine Runde, in der der Librarian die Antwort im
+    Bestand findet oder ``claim-add`` sie als Near-Duplicate abweist. Der
+    zweite Fehler ist erholbar, der erste nicht.
+
+    Deshalb ist das hier auch nur die **mechanische Rückfallebene**. Die
+    eigentliche Unterscheidung trifft der Hypothesis-Agent, der den Bestands-
+    index in seinem Kontext sieht.
+    """
+    hits = search_vault(skill_path, query, limit=5)
+    best = hits[0]["score"] if hits else 0.0
+    return {
+        "covered": best >= threshold,
+        "best_score": best,
+        "threshold": threshold,
+        "candidates": hits,
+    }
+
+
+# ─── Nutzungsverfolgung ───────────────────────────────────────────────────
+
+_CLAIM_REF = re.compile(r"\bC-\d{4}\b")
+
+
+def _page_slugs(skill_path: str) -> list:
+    return [p["slug"] for p in read_pages(skill_path)]
+
+
+def scan_transcripts(skill_path: str, experiment_dir: str) -> dict:
+    """Welcher Run welche Claims und Seiten gelesen hat.
+
+    Warum das nötig ist: unsere train-Runs lesen den Bestand. Besteht ein
+    train-Eval, weil der Bestand die Tatsache geliefert hat, sieht der
+    Hypothesis-Agent einen Erfolg, den der Skill nicht verursacht hat — und
+    leitet daraus ein ``success_pattern`` ab, das die Schutzliste des Mutators
+    füllt. Umgekehrt: scheitert ein Eval, obwohl der passende Claim gelesen
+    wurde, fehlt nicht das Wissen, sondern der Weg dorthin. Das ist ein
+    SKILL_DEFECT auf den Verweis, keine Wissenslücke.
+
+    Ohne diese Zuordnung lassen sich beide Fälle nicht von ihren Gegenstücken
+    unterscheiden, und die Klassifikation in ``agents/hypothesis.md`` rät.
+
+    Gesucht wird nach Claim-IDs und Seiten-Slugs im Text der Transcripts. Das
+    ist eine Untergrenze, keine exakte Messung: ein Agent, der eine Seite liest
+    und nichts davon zitiert, taucht nicht auf. Für die beiden Fragen oben
+    reicht es, und es kostet nichts.
+    """
+    exp_path = Path(experiment_dir)
+    if not exp_path.is_dir():
+        raise FileNotFoundError("Kein Experiment-Verzeichnis: %s" % experiment_dir)
+    slugs = _page_slugs(skill_path)
+    by_run: dict = {}
+    for path in sorted(exp_path.rglob("*")):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        parts = path.relative_to(exp_path).parts
+        side = next((p for p in reversed(parts) if p in ("with_mutation", "baseline")), None)
+        if side is None:
+            continue
+        marker = len(parts) - 1 - list(reversed(parts)).index(side)
+        head = list(parts[:marker])
+        if head and head[0] == "runs":
+            head = head[1:]
+        eval_id = "/".join(head) or "eval"
+
+        claims = set(_CLAIM_REF.findall(text))
+        pages = {s for s in slugs if s and s in text}
+        if not claims and not pages:
+            continue
+        key = "%s|%s" % (eval_id, side)
+        entry = by_run.setdefault(
+            key, {"eval": eval_id, "side": side, "claims": set(), "pages": set()}
+        )
+        entry["claims"] |= claims
+        entry["pages"] |= pages
+
+    runs = []
+    counts: dict = {}
+    for entry in sorted(by_run.values(), key=lambda e: (e["eval"], e["side"])):
+        for cid in entry["claims"]:
+            counts[cid] = counts.get(cid, 0) + 1
+        runs.append({
+            "eval": entry["eval"], "side": entry["side"],
+            "claims": sorted(entry["claims"]), "pages": sorted(entry["pages"]),
+        })
+    known = {c["claim_id"] for c in all_claims(skill_path)}
+    return {
+        "runs": runs,
+        "claims_used": counts,
+        "claims_unknown": sorted(set(counts) - known),
+        "runs_with_vault_access": len(runs),
+    }
+
+
+def update_usage(usage_path: str, skill_path: str, experiment_dir: str,
+                 experiment_id: str) -> dict:
+    """Schreibt die Nutzung eines Experiments fort und summiert über den Lauf.
+
+    ``experiments_since_use`` je Claim ist die Zahl, aus der später ein
+    Prune-Vorschlag wird: ein Claim, der über viele Experimente nie gelesen
+    wurde, belegt Budget, ohne etwas zu tun. Gelöscht wird deswegen nichts —
+    der Vorschlag gehört in den Report, die Entscheidung zum Menschen.
+    """
+    scan = scan_transcripts(skill_path, experiment_dir)
+    path = Path(usage_path)
+    if path.exists():
+        usage = json.loads(path.read_text(encoding="utf-8"))
+    else:
+        usage = {"experiments": [], "totals": {}}
+
+    usage["experiments"] = [
+        e for e in usage["experiments"] if e.get("experiment") != experiment_id
+    ]
+    usage["experiments"].append({
+        "experiment": experiment_id,
+        "runs": scan["runs"],
+        "claims_used": scan["claims_used"],
+        "timestamp": _utc_now(),
+    })
+    usage["experiments"].sort(key=lambda e: e["experiment"])
+
+    totals: dict = {}
+    seen_experiments = [e["experiment"] for e in usage["experiments"]]
+    for entry in usage["experiments"]:
+        for cid, count in entry["claims_used"].items():
+            row = totals.setdefault(cid, {"uses": 0, "last_experiment": None})
+            row["uses"] += count
+            row["last_experiment"] = entry["experiment"]
+    for claim in all_claims(skill_path):
+        row = totals.setdefault(
+            claim["claim_id"], {"uses": 0, "last_experiment": None}
+        )
+        if row["last_experiment"] is None:
+            row["experiments_since_use"] = len(seen_experiments)
+        else:
+            after = seen_experiments[seen_experiments.index(row["last_experiment"]) + 1:]
+            row["experiments_since_use"] = len(after)
+    usage["totals"] = dict(sorted(totals.items()))
+    usage["never_used"] = sorted(c for c, r in totals.items() if r["uses"] == 0)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(usage, indent=2, ensure_ascii=False), encoding="utf-8")
+    return usage
+
+
+def format_usage(usage_path: str, experiment_id: str | None = None) -> str:
+    """Block für den Hypothesis-Agenten.
+
+    Die Kopfzeile ist die Anweisung, nicht die Tabelle. Ohne sie ist das eine
+    Statistik, mit ihr die Regel, nach der Erfolge und Fehlschläge zu lesen
+    sind.
+    """
+    path = Path(usage_path)
+    if not path.exists():
+        return ""
+    usage = json.loads(path.read_text(encoding="utf-8"))
+    entries = usage.get("experiments", [])
+    if experiment_id:
+        entries = [e for e in entries if e["experiment"] == experiment_id]
+    entries = entries[-1:] if entries else []
+    if not entries or not entries[0]["runs"]:
+        return ""
+    lines = [
+        "Bestandsnutzung im letzten Experiment. Zwei Regeln beim Lesen der "
+        "Ergebnisse:",
+        "",
+        "1. Ein bestandener train-Eval, dessen Run Claims gelesen hat, belegt "
+        "NICHT, dass der Skill gut ist — die Tatsache kam womöglich aus dem "
+        "Bestand. Solche Runs taugen nicht als success_pattern.",
+        "2. Ein gescheiterter Eval, dessen Run den passenden Claim gelesen hat, "
+        "ist KEINE Wissenslücke. Das Wissen war da und hat nicht getragen: "
+        "SKILL_DEFECT auf den Verweis.",
+        "",
+    ]
+    for run in entries[0]["runs"]:
+        lines.append("- %s [%s]: Claims %s | Seiten %s" % (
+            run["eval"], run["side"],
+            ", ".join(run["claims"]) or "—",
+            ", ".join(run["pages"]) or "—",
+        ))
+    never = usage.get("never_used") or []
+    if never:
+        lines.append("")
+        lines.append("Nie gelesen: %s" % ", ".join(never))
+    return "\n".join(lines).rstrip() + "\n"
+
+
 # ─── CLI ──────────────────────────────────────────────────────────────────
 
 
@@ -1097,6 +1395,11 @@ def build_parser() -> argparse.ArgumentParser:
     append.add_argument("--domain")
     append.add_argument("--single-eval-accepted", action="store_true")
     append.add_argument("--generalizability", default="")
+    append.add_argument(
+        "--skill",
+        help="Pfad zur Ziel-SKILL.md. Prüft den Bestand, bevor eine Lücke "
+             "angelegt wird. Ohne die Angabe entfällt die Prüfung",
+    )
 
     resolve = sub.add_parser(
         "gap-resolve", help="Stand eines Gaps fortschreiben"
@@ -1172,6 +1475,30 @@ def build_parser() -> argparse.ArgumentParser:
     leak.add_argument("skill_path")
     leak.add_argument("--evals", required=True)
 
+    search = sub.add_parser(
+        "search", help="Liegt die Antwort auf eine Frage schon im Bestand?"
+    )
+    search.add_argument("skill_path")
+    search.add_argument("query", help="Die Frage im Wortlaut")
+    search.add_argument("--limit", type=int, default=5)
+    search.add_argument("--threshold", type=float,
+                        default=VAULT_COVERAGE_THRESHOLD)
+
+    usage = sub.add_parser(
+        "usage-update",
+        help="Aus den Transcripts erfassen, welcher Run welche Claims las",
+    )
+    usage.add_argument("usage_path", help="Pfad zur knowledge-usage.json")
+    usage.add_argument("--skill", required=True, help="Ziel-SKILL.md")
+    usage.add_argument("--experiment-dir", required=True)
+    usage.add_argument("--experiment", required=True)
+
+    ufmt = sub.add_parser(
+        "usage-format", help="Nutzungsblock für den Hypothesis-Agenten"
+    )
+    ufmt.add_argument("usage_path")
+    ufmt.add_argument("--experiment")
+
     return parser
 
 
@@ -1214,6 +1541,7 @@ def main(argv: list | None = None) -> int:
                 "single_eval_accepted": args.single_eval_accepted,
                 "generalizability": args.generalizability,
             }
+        fields["skill_path"] = args.skill
         try:
             result = append_gap(args.gaps_path, **fields)
         except ValueError as exc:
@@ -1222,7 +1550,10 @@ def main(argv: list | None = None) -> int:
             ), file=sys.stderr)
             return 1
         print(json.dumps(result, indent=2, ensure_ascii=False))
-        return 0
+        # Exit 3: der Bestand deckt die Frage bereits. Der Aufrufer soll das
+        # nicht mit einem Duplikat verwechseln — hier ist nichts zu fragen,
+        # sondern der Verweis auf den Bestand zu reparieren.
+        return 3 if result.get("covered_by_vault") else 0
 
     if args.command == "gap-resolve":
         try:
@@ -1329,6 +1660,38 @@ def main(argv: list | None = None) -> int:
         print(json.dumps({"leaks": hits, "clean": not hits},
                          indent=2, ensure_ascii=False))
         return 1 if hits else 0
+
+    if args.command == "search":
+        result = vault_covers(args.skill_path, args.query,
+                              threshold=args.threshold)
+        result["candidates"] = search_vault(
+            args.skill_path, args.query, limit=args.limit
+        )
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0 if result["covered"] else 1
+
+    if args.command == "usage-update":
+        try:
+            usage = update_usage(args.usage_path, args.skill,
+                                 args.experiment_dir, args.experiment)
+        except FileNotFoundError as exc:
+            print(json.dumps({"error": str(exc)}, indent=2, ensure_ascii=False),
+                  file=sys.stderr)
+            return 1
+        latest = usage["experiments"][-1]
+        print(json.dumps({
+            "experiment": latest["experiment"],
+            "runs_with_vault_access": len(latest["runs"]),
+            "claims_used": latest["claims_used"],
+            "never_used": usage["never_used"],
+        }, indent=2, ensure_ascii=False))
+        return 0
+
+    if args.command == "usage-format":
+        block = format_usage(args.usage_path, args.experiment)
+        if block:
+            print(block, end="")
+        return 0
 
     return 1
 

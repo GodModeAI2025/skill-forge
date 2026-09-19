@@ -1,6 +1,6 @@
 # Release Notes
 
-## Unreleased: Rauschgrenze gemessen, Metrik markiert, Wissen erkannt und aufgenommen
+## Unreleased: Rauschgrenze gemessen, Metrik markiert, Wissen erkannt, aufgenommen und verrechnet
 
 _Versionsnummer vergibt der Owner beim Release; Stand 2026-09-19._
 
@@ -143,7 +143,48 @@ bewerten — die erste Formulierung des Verweises wäre für immer eingefroren. 
 Region steht deshalb nicht in `PROTECTED_REGIONS`; dass es den Verweis
 überhaupt gibt, prüft ein Lint in `verify`.
 
-37 neue Tests. Die Suite steht damit bei 353.
+37 neue Tests.
+
+**Was schon im Bestand liegt, war trotzdem eine Wissenslücke.** `gap-append`
+prüfte, ob dieselbe *Frage* schon gestellt wurde — nicht, ob die *Antwort*
+schon im Bestand liegt. Ein beim Wizard eingelegter Fakt ging nie durch die
+Gap-Queue, also griff die Dedup-Prüfung nicht. Die Folge war eine Schleife: der
+Hypothesis-Agent meldet die Lücke, der Librarian findet die Antwort im Bestand,
+wo sie schon war, `claim-add` weist sie als Near-Duplicate ab. Eine Runde
+verbrannt, und die eigentliche Ursache — der Agent hat den Bestand nicht
+konsultiert — blieb unerkannt.
+
+Zwei Ebenen beheben das. Der Bestandsindex liegt jetzt im Agent-Kontext, damit
+der Hypothesis-Agent sieht, welche Themen gedeckt sind; das ist die
+Entscheidung. Und `gap-append --skill` durchsucht den Bestand und bricht mit
+Exit 3 ab; das ist die Rückfallebene. Die Schwelle ist bewusst hoch: ein
+falsches „gedeckt" heisst, die Lücke wird nie gemeldet und die Tatsache nie
+beschafft — ein dauerhafter blinder Fleck. Ein falsches „nicht gedeckt" kostet
+eine Runde. Der zweite Fehler ist erholbar, der erste nicht.
+
+**Ein bestandener train-Eval belegt nicht mehr automatisch, dass der Skill gut
+ist.** Der Agent liest den Bestand auch in den train-Runs. Hat er dort Claims
+gelesen, kam die Tatsache womöglich von dort und nicht aus einer Anweisung —
+solche Runs taugen nicht als `success_patterns`, und `success_patterns` sind
+die Schutzliste, die den Mutator vom Prunen abhält. Umgekehrt: ein
+gescheiterter Eval, dessen Run den passenden Claim gelesen hat, ist keine
+Wissenslücke, sondern ein `SKILL_DEFECT` auf den Verweis. Beide Fälle sind ohne
+Zuordnung nicht von ihrem Gegenteil zu unterscheiden, deshalb erfasst
+`usage-update` nach jedem Experiment aus den Transcripts, welcher Run welche
+Claims gelesen hat. Das ist eine Untergrenze, keine Messung: wer eine Seite
+liest und nichts zitiert, taucht nicht auf. Nebenprodukt ist `never_used` — die
+Grundlage späterer Prune-Vorschläge.
+
+Anlass für beides: WikiSkill (arXiv:2608.27454, Tang et al., Google Research).
+Deren Ablation misst, dass Wiki-Zugriff des Agenten während der
+Trainings-Rollouts die Skill-Qualität senkt (63,7 % auf 60,9 % im Schnitt, auf
+livemath 72,6 % auf 64,8 %), weil die Trajektorien weniger über den Skill
+aussagen. Ihr Mittel — Wiki im Training abschalten — passt hier nicht: deren
+Wiki enthält Verfahren, die in den Skill kompiliert werden sollen, unser
+Bestand enthält Tatsachen, die der Agent zur Laufzeit braucht. Übernommen ist
+die Konsequenz, nicht das Mittel.
+
+16 neue Tests. Die Suite steht damit bei 369.
 
 ## v3.4 (2026-07-29): Härtung nach der adversarialen Review
 

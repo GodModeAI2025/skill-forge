@@ -11,11 +11,14 @@ jenem Repository.
 * **Phase 2 — Wissen entgegennehmen:** Wissensbestand beim Ziel-Skill,
   Quellenregister mit SHA-256, `claim-add` mit fünf Gates, `verify`, `index`,
   getrennte Budgets, `agents/librarian.md`.
-* Aus Phase 4 vorgezogen, weil das Format es ohnehin tragen musste:
-  Quellendrift-Erkennung und Supersession statt Überschreiben.
+* Aus Phase 4 vorgezogen: Quellendrift-Erkennung, Supersession statt
+  Überschreiben, und die Nutzungsverfolgung aus den Transcripts.
+* Nach der Lektüre von WikiSkill (arXiv:2608.27454) nachgezogen: der
+  Bestands-Check vor dem Anlegen einer Lücke, und die beiden Leseregeln für
+  Ergebnisse aus Runs mit Bestandszugriff (Abschnitt 14).
 
-Offen sind Phase 3 (freigegebene Quellen), der Rest von Phase 4
-(Nutzungsverfolgung aus Transcripts, Prune-Vorschläge) und Phase 5.
+Offen sind Phase 3 (freigegebene Quellen), die Prune-Vorschläge aus Phase 4
+und Phase 5.
 
 **Zu den Fragen in Abschnitt 13:** Frage 1 und 2 sind entschieden — der Bestand
 liegt beim Ziel-Skill und der Loop darf dort `knowledge/` anlegen. Grundlage
@@ -610,3 +613,58 @@ Claims.
 4. **Sollen Phase 3 (freigegebene Quellen) und Phase 5 (Tresor-Aufstieg)
    überhaupt gebaut werden**, oder reicht Phase 1+2+4 — also: vorab
    bereitstellen, nachfragen, pflegen?
+
+---
+
+## 14. Nachtrag: was WikiSkill (arXiv:2608.27454) geändert hat
+
+Tang et al. (Google Research, 08/2026) bauen dasselbe Grundmuster — Skills, die
+sich gegen ein persistentes Wissen koevolvieren — und messen es. Zwei Befunde
+ihrer Ablation (Tabelle 3, gemini-3.5-flash, Ø über vier Benchmarks) haben hier
+etwas geändert.
+
+**Befund 1: Persistentes Wissen für den Optimierer bringt +15,0 Punkte**
+(48,7 → 63,7; auf livemath +21,3). Das ist der grösste Einzeleffekt im Paper.
+Betrifft uns beim Optimizer-Gedächtnis (`editing-notes.md`, auf 8 Bullets
+gedeckelt und alle fünf Experimente neu geschrieben) — offen, siehe unten.
+
+**Befund 2: Wiki-Zugriff des Agenten während der Trainings-Rollouts senkt die
+Skill-Qualität** (63,7 → 60,9; livemath −7,8). Begründung der Autoren: der
+Agent löst die Aufgabe teils aus dem Wiki statt aus dem Skill, „which can make
+the resulting trajectories less informative for skill development".
+
+Ihr Mittel — Wiki im Training abschalten — passt nicht auf uns. Ihr Wiki
+enthält **Verfahren**, die in den Skill kompiliert werden sollen; unser Bestand
+enthält **Tatsachen**, die der Agent zur Laufzeit braucht und nicht herleiten
+kann. Abschalten machte die train-Runs unrealistisch. Übernommen wurde deshalb
+die Konsequenz, nicht das Mittel: die Ergebnisse müssen wissen, ob der Bestand
+mitgeholfen hat (`usage-update`, zwei Leseregeln in `agents/hypothesis.md`
+Abschnitt 2b-bis).
+
+**Ein Fehler, den erst diese Lektüre sichtbar gemacht hat.** `gap-append`
+prüfte, ob dieselbe *Frage* schon gestellt wurde, aber nicht, ob die *Antwort*
+schon im Bestand liegt. Ein beim Wizard eingelegter Fakt ging nie durch die
+Gap-Queue — die Schleife war: Lücke gemeldet, Librarian findet die Antwort im
+Bestand, `claim-add` weist sie als Near-Duplicate ab. Behoben über den
+Bestandsindex im Agent-Kontext plus `gap-append --skill` (Exit 3).
+
+**Zwei Korrekturen an früheren Einschätzungen aus dieser Session.** Der Paired
+Bootstrap (1000 Iterationen, p<0.05) ist bei WikiSkill *nicht* das Gate,
+sondern dient der Signifikanz in den Vergleichstabellen; das Gate ist stumpf
+`R(val) > R_best`. Und „kein Wiki zur Laufzeit" beschreibt die
+Trainings-Rollouts, nicht die Auslieferung — der Mechanismus ist
+Signalkontamination, nicht Laufzeitschaden.
+
+**Weiter offen, bewusst nicht gebaut:**
+
+1. **Verdichtetes Optimizer-Gedächtnis statt gedeckelter Bullets.** Ihr Wiki
+   hat kein Limit, wird patch-basiert verfeinert und nie zurückgesetzt; Seiten
+   sammeln Evidenz über Iterationen („Evidence: Iter 0: train 00,02 | Iter 1:
+   train 01 | Iter 2-4: train 02 persists"). Unsere Artefakte sind Protokolle
+   (`rejected.jsonl`, `history.archive.jsonl`), nicht verdichtetes Wissen. Das
+   ist Befund 1 und die grösste erwartete Wirkung — aber ein Umbau, der über
+   den Workspace hinaus lebt.
+2. **`PURPOSE.md` je Skill**: ein Rückverweis vom Skill auf das Wissen, das ihn
+   motiviert hat, inklusive verworfener Vorversuche. Wir haben das in
+   `history.json`, aber nicht im weitergegebenen Artefakt.
+3. **Validierung über mehrere Ziele**, nicht nur mehrere Evals eines Ziels.

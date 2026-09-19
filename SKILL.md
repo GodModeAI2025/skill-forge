@@ -406,6 +406,7 @@ Nach Bestätigung:
 ├── rejected.jsonl          # Nicht-KEEP im Wortlaut, kompaktierungsfest
 ├── knowledge-gaps.jsonl    # Erkannte Wissenslücken als Fragen, append-only
 ├── knowledge-inbox/        # Vom User bereitgestelltes Rohmaterial
+├── knowledge-usage.json    # Welcher Run welche Claims gelesen hat
 ├── editing-notes.md        # Meta-Memory des Optimierers, alle 5 Experimente
 ├── checkpoint.json         # Resume-Point für Session-Übergreifendes Fortsetzen
 ├── experiment-log.tsv      # Flaches Log für schnelles Monitoring
@@ -539,6 +540,12 @@ Vor jedem Agent-Aufruf wird der Agent-Prompt dynamisch angereichert:
      `python3 scripts/knowledge.py gap-format <workspace>/knowledge-gaps.jsonl --limit 10`,
      also die bereits gemeldeten Wissenslücken. Ohne ihn stellt der
      Hypothesis-Agent jede Nacht dieselbe Frage.
+   - Den Inhalt von `<ziel-skill>/knowledge/INDEX.md`, falls ein Bestand
+     existiert. Ohne ihn sieht der Hypothesis-Agent nicht, dass eine Tatsache
+     schon im Bestand liegt, und meldet sie als Lücke.
+   - Der Block aus
+     `python3 scripts/knowledge.py usage-format <workspace>/knowledge-usage.json`,
+     also welcher Run welche Claims gelesen hat.
 3. Hänge den gefüllten Context an den jeweiligen Agent-Prompt an
 4. Context-Budget-Regel: Max 30% des Agent-Contexts für History, Coverage,
    Meta-Notizen und den Rejected-Block. 70% für die aktuelle Aufgabe.
@@ -1250,6 +1257,7 @@ Standardwerte, die der User überschreiben kann:
 | `knowledge_enabled` | true | Wissenszweig aktiv. Auf `false` wird `KNOWLEDGE_GAP` nicht klassifiziert |
 | `knowledge_inbox` | `<workspace>/knowledge-inbox` | Vom User bereitgestelltes Rohmaterial |
 | `knowledge_budget` | `4 × token_budget` | Deckel für `knowledge/pages/`, getrennt vom strengen Budget |
+| `vault_coverage_threshold` | 0.6 | Ab welchem Deckungsgrad `gap-append` eine Frage als vom Bestand beantwortet abweist |
 | `token_budget` | (berechnet) | `max(2000, ceil(initial * 1.25))`, vom Wizard gesetzt |
 | `chars_per_token` | 3 | Divisor der Token-Schätzung, 3 für deutsche Texte |
 | `protected_paths` | [] | Pfade, die der Loop nie ändert (Generic-Modus, Pflicht) |
@@ -1345,12 +1353,15 @@ ergänzt, misst sich selbst ein gutes Zeugnis aus.
 ```bash
 python3 scripts/knowledge.py gap-append <workspace>/knowledge-gaps.jsonl \
   --from-json <workspace>/experiments/exp-<NNN>/hypothesis.json \
-  --experiment exp-<NNN>
+  --experiment exp-<NNN> --skill <ziel-SKILL.md>
 ```
 
    Exit 1 heisst: Belegpflicht nicht erfüllt oder ein Pflichtfeld fehlt. Dann
    ist die Entscheidung `SKIP`, nicht `DEFERRED`: es liegt keine brauchbare
    Frage vor.
+
+   Exit 3 heisst: **der Bestand deckt die Frage schon** — siehe „Was schon im
+   Bestand liegt, ist keine Lücke" weiter unten.
 
 3. Der Librarian (`agents/librarian.md`) sucht die Antwort im bereitgestellten
    Material: `knowledge-inbox/` und alles, was in `knowledge/SOURCES.md` steht.
@@ -1533,6 +1544,84 @@ Prüft Struktur, Provenienz und Quellendrift, mit drei Abstufungen:
 
 `verify` gehört in den Lauf nach jedem `claim-add` und vor jeden Report.
 
+### Was schon im Bestand liegt, ist keine Lücke
+
+Ein Fakt, den der User beim Wizard eingelegt hat, ist nie durch die Gap-Queue
+gegangen. Die Dedup-Prüfung über die Frage greift also nicht. Ohne weitere
+Sperre entstünde eine Schleife: Der Hypothesis-Agent meldet die Lücke, der
+Librarian findet die Antwort im Bestand, wo sie schon war, `claim-add` weist
+sie als Near-Duplicate ab — eine Runde verbrannt, und die wahre Ursache bleibt
+unerkannt.
+
+Zwei Ebenen verhindern das:
+
+1. **Der Bestandsindex liegt im Agent-Kontext.** Der Hypothesis-Agent sieht,
+   welche Themen der Bestand führt, und klassifiziert entsprechend. Das ist die
+   eigentliche Entscheidung.
+2. **`gap-append --skill` durchsucht den Bestand** und bricht mit Exit 3 ab,
+   wenn die Frage gedeckt ist. Das ist die mechanische Rückfallebene.
+
+Ist die Frage gedeckt, fehlt nicht das Wissen, sondern der Weg dorthin: die
+Tatsache liegt da und erreicht den Agenten nicht. Das ist ein `SKILL_DEFECT`
+auf den Verweis, und die Runde läuft als normales Experiment weiter — kein
+`DEFERRED`, kein Librarian.
+
+```bash
+python3 scripts/knowledge.py search <ziel-SKILL.md> "<frage>"
+```
+
+Exit 0 heisst gedeckt, Exit 1 nicht gedeckt; die Kandidaten stehen mit den
+geteilten Wörtern in der Ausgabe, damit nachvollziehbar ist, warum etwas als
+Treffer galt.
+
+**Die Schwelle ist bewusst hoch, und die Asymmetrie ist das Entwurfsmerkmal.**
+Ein falsches „gedeckt" heisst: die Lücke wird nie gemeldet, die fehlende
+Tatsache nie beschafft — ein dauerhafter blinder Fleck. Ein falsches „nicht
+gedeckt" kostet eine Runde. Der zweite Fehler ist erholbar, der erste nicht.
+Deshalb greift die Sperre nur bei deutlicher Überschneidung, und deshalb ist
+sie die Rückfallebene und nicht die Entscheidung.
+
+### Bestandsnutzung: was ein Erfolg noch belegt
+
+Der Agent liest den Bestand **auch in den train-Runs**. Damit ändert sich, was
+die Ergebnisse belegen — und zwar in beide Richtungen:
+
+- Ein **bestandener** train-Eval, dessen Run Claims gelesen hat, belegt nicht,
+  dass der Skill gut ist. Die Tatsache kam womöglich aus dem Bestand. Solche
+  Runs taugen nicht als `success_patterns` — und `success_patterns` sind die
+  Schutzliste, die den Mutator vom Prunen abhält. Eine Schutzliste aus
+  Bestandstreffern schützt die falschen Abschnitte.
+- Ein **gescheiterter** Eval, dessen Run den passenden Claim gelesen hat, ist
+  keine Wissenslücke. Das Wissen war da und hat nicht getragen: `SKILL_DEFECT`.
+
+Beides lässt sich ohne Zuordnung nicht von seinem Gegenteil unterscheiden.
+Deshalb wird nach jedem Experiment erfasst, welcher Run welche Claims gelesen
+hat:
+
+```bash
+python3 scripts/knowledge.py usage-update <workspace>/knowledge-usage.json \
+  --skill <ziel-SKILL.md> \
+  --experiment-dir <workspace>/experiments/exp-<NNN> --experiment exp-<NNN>
+```
+
+Gesucht wird nach Claim-IDs und Seiten-Slugs im Text der Transcripts. Das ist
+eine **Untergrenze**, keine exakte Messung: ein Agent, der eine Seite liest und
+nichts daraus zitiert, taucht nicht auf. Für die beiden Regeln oben reicht es.
+
+Nebenprodukt ist `never_used`: Claims, die über den ganzen Lauf nie gelesen
+wurden. Sie belegen Budget, ohne etwas zu tun, und gehören als Vorschlag in den
+Report. Gelöscht wird nichts automatisch.
+
+**Warum wir den Bestand trotzdem nicht aus den train-Runs nehmen.** WikiSkill
+(arXiv:2608.27454) misst, dass Wiki-Zugriff des Agenten während der
+Trainings-Rollouts die Skill-Qualität senkt, weil die Trajektorien weniger über
+den Skill aussagen. Dort enthält das Wiki aber **Verfahren**, die in den Skill
+kompiliert werden sollen. Unser Bestand enthält **Tatsachen**, die der Agent
+zur Laufzeit braucht und nicht herleiten kann — sie abzuschalten machte die
+train-Runs unrealistisch. Wir übernehmen deshalb nicht die Abschaltung, sondern
+die Konsequenz daraus: die Ergebnisse müssen wissen, ob der Bestand mitgeholfen
+hat.
+
 ### Fragen beantworten
 
 ```bash
@@ -1634,6 +1723,10 @@ Gegenmaßnahmen:
 9. **Kein erfundenes Wissen**: Kein Claim ohne registrierte Quelle und
    Fundstelle. Eine plausibel klingende Erfindung besteht Assertions besser als
    eine sperrige Wahrheit — das Gate belohnte sie, statt sie zu fangen.
+10. **Erfolge werden nach Herkunft gelesen**: Ein bestandener train-Eval,
+    dessen Run Claims gelesen hat, geht nicht als `success_pattern` in die
+    Schutzliste des Mutators ein. Sonst schützt die Liste Abschnitte, die den
+    Erfolg gar nicht getragen haben.
 
 ---
 
