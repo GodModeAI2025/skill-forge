@@ -308,6 +308,46 @@ Das Feld `never_used` sammelt nebenbei die Claims, die über den Lauf nie
 gelesen wurden. Sie gehören als Prune-Vorschlag in den Report; gelöscht wird
 nichts automatisch.
 
+### 4.8. Evidenz an die Muster hängen
+
+Nach jeder Entscheidung, sobald `decision.json` steht: Wenn die Hypothese ein
+Muster aus dem Index aufgegriffen hat (Feld `builds_on_pattern` in
+`hypothesis.json`), hänge das Ergebnis an dieses Muster:
+
+```bash
+python3 scripts/patterns.py evidence <workspace> P-<NNNN> \
+  --experiment exp-<NNN> --decision <KEEP|REVERT|NEUTRAL|...> \
+  --delta <delta aus decision.json> --mutation-type <typ>
+```
+
+**Das macht der Orchestrator, nicht der Meta-Agent.** Ein Agent, der seine
+eigene Belegzahl schreibt, belegt sich selbst; der objektive Teil kommt aus
+`decision.json`, die Deutung aus dem Meta-Agenten. Dieselbe Trennung wie bei
+WikiSkills `skill-impact.md`, das die Harness schreibt und nicht der Proposer.
+
+Der Aufruf ist über die Experiment-ID idempotent: ein Resume, das dasselbe
+Experiment erneut verbucht, verdoppelt den Beleg nicht.
+
+### 4.9. Herkunft in die PURPOSE.md des Ziels
+
+Nur bei `KEEP`, nach der Entscheidung und vor dem Checkpoint:
+
+```bash
+python3 scripts/composite_score.py purpose-append <ziel-verzeichnis>/PURPOSE.md \
+  --experiment exp-<NNN> --category <kategorie> --mutation-type <typ> \
+  --hypothesis "<hypothese>" --section "<abschnitt>" \
+  --before <baseline> --after <kandidat> \
+  --rejected <workspace>/rejected.jsonl \
+  [--pattern P-NNNN] [--knowledge C-NNNN]
+```
+
+`--rejected` ist der Punkt: der Befehl hängt die verworfenen Vorversuche
+derselben Kategorie an, die dieser Änderung vorausgingen. Ohne sie ist die
+Datei ein Changelog. Über die Experiment-ID idempotent.
+
+Nur im Skill-Modus. Im Generic-Modus gibt es keinen Ziel-Skill, der die Datei
+mitnehmen könnte; die Herkunft steht dort in `history.json` und im TSV-Log.
+
 ### 5. Checkpoint-Management
 
 Nach jedem abgeschlossenen Experiment (egal ob KEEP, REVERT oder NEUTRAL):
@@ -346,26 +386,6 @@ Resume nach einem Crash sonst nicht beantworten kann: liegt auf der Platte der s
 Baseline-Stand oder eine Mutation, über die nie entschieden wurde? Steht das Flag beim
 Resume auf true, wird zuerst auf `on_disk_version` zurückgerollt und das Experiment neu
 aufgesetzt.
-
-### 4.8. Evidenz an die Muster hängen
-
-Nach jeder Entscheidung, sobald `decision.json` steht: Wenn die Hypothese ein
-Muster aus dem Index aufgegriffen hat (Feld `builds_on_pattern` in
-`hypothesis.json`), hänge das Ergebnis an dieses Muster:
-
-```bash
-python3 scripts/patterns.py evidence <workspace> P-<NNNN> \
-  --experiment exp-<NNN> --decision <KEEP|REVERT|NEUTRAL|...> \
-  --delta <delta aus decision.json> --mutation-type <typ>
-```
-
-**Das macht der Orchestrator, nicht der Meta-Agent.** Ein Agent, der seine
-eigene Belegzahl schreibt, belegt sich selbst; der objektive Teil kommt aus
-`decision.json`, die Deutung aus dem Meta-Agenten. Dieselbe Trennung wie bei
-WikiSkills `skill-impact.md`, das die Harness schreibt und nicht der Proposer.
-
-Der Aufruf ist über die Experiment-ID idempotent: ein Resume, das dasselbe
-Experiment erneut verbucht, verdoppelt den Beleg nicht.
 
 ### 5.5. Meta-Memory
 

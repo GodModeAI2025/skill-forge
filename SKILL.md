@@ -332,6 +332,11 @@ Evals, bevor der Loop startet.
    Exit 0. Bei Exit 2 wurden keine Gradings gefunden, dann stimmt der Pfad oder das
    Verzeichnislayout nicht.
 5. Speichere Baseline-Score
+6. **Falls `transfer_evals` gesetzt ist:** miss auch dort die Baseline, jetzt
+   und nur jetzt. Das Transfer-Set wird wie der test-Split genau zweimal
+   angefasst, und die erste Messung gehört vor Experiment 1 — danach ist keine
+   unverfälschte Baseline mehr zu bekommen. Ergebnis nach
+   `transfer_baseline` in die config.json.
 
 **Generic-Modus:**
 1. Führe den Metrik-Command aus
