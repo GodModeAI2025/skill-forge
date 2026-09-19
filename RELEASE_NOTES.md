@@ -277,7 +277,38 @@ Paper. WikiSkill gated auf einem einzigen `Dval`; seine Transferzahlen sind
 Analyse, nicht Torwächter. Ein Gate über mehrere Ziele wäre eine eigene
 Entwurfsentscheidung mit eigenen Kosten und ist bewusst nicht gebaut.
 
-6 neue Tests. Die Suite steht damit bei 400.
+6 neue Tests.
+
+**Der Wissenspfad hatte kein durchgelaufenes Beispiel.** `generic-mode-lauf.md`
+zeigt seit v3, wie die Sperren im Generic-Modus greifen; für den Wissenszweig
+mit seinen fünf Gates gab es nur Prosa. `examples/wissensluecke-lauf.md` holt
+das nach: ein Lektorats-Skill, der den Belegstil seines Verlags nicht kennt,
+von der erkannten Lücke über die Beschaffung bis zur Quellendrift. Alle
+Ausgaben stammen aus den gezeigten Aufrufen.
+
+Drei Gates lösen darin an echten Daten aus. Der Leak-Check weist den einen
+Claim ab, der wörtlich die Assertion eines val-Evals ist — er hätte alle
+anderen Prüfungen bestanden und den Score gehoben, ohne dass etwas
+generalisiert. Das Secret-Gate schlägt bei einem Key im Quelltext an, das
+Provenienz-Gate bei einer Aussage ohne registrierte Quelle. Dazu die beiden
+Fälle, die sich leicht verwechseln lassen: eine umformulierte Frage, die der
+Bestand schon deckt (Exit 3, kein DEFERRED), und eine, für die es keine Quelle
+gibt (DEFERRED, Frage im Report).
+
+**Prune-Vorschläge schliessen Phase 4 ab.** `prune-suggest` listet Claims, die
+über `knowledge_stale_experiments` Experimente (Default 20) nie gelesen wurden.
+Der Befehl schreibt nichts, und der Loop löscht im Auto-Modus keinen Claim. Die
+Asymmetrie: ein zu Unrecht behaltener Claim kostet ein paar Token in einem weit
+bemessenen Budget; ein zu Unrecht gelöschter kostet Quelle, Fundstelle und die
+Arbeit seiner Beschaffung — und fehlt genau dann, wenn der seltene Fall
+eintritt, für den er aufgenommen wurde.
+
+Nichtnutzung ist zudem ein schwaches Signal, und die Ausgabe sagt das: sie kann
+heissen, dass der Claim überflüssig ist, oder dass die Evals sein Thema nicht
+abdecken, oder dass der Index ihn nicht findet. Löschen behebt nur den ersten
+Fall. Ein bereits als veraltet markierter Claim erscheint nicht erneut.
+
+6 neue Tests. Die Suite steht damit bei 406.
 
 ## v3.4 (2026-07-29): Härtung nach der adversarialen Review
 

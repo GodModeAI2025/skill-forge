@@ -95,6 +95,36 @@ Verweis-Problem, nicht als Wissenslücke.
 Stand: {gap_open} offen · {gap_answered} beantwortet · {gap_rejected} verworfen
 (`knowledge.py gap-stats {workspace_path}/knowledge-gaps.jsonl`)
 
+## Wissensbestand
+
+{knowledge_stats_block}
+
+### Nie gelesene Claims
+
+{knowledge_prune_block}
+
+Gerendert mit
+`knowledge.py prune-suggest {workspace_path}/knowledge-usage.json --skill <ziel-SKILL.md>`.
+
+**Ein Vorschlag, keine Löschliste.** Der Loop entfernt im Auto-Modus keinen
+Claim. Die Asymmetrie: ein zu Unrecht behaltener Claim kostet ein paar Token in
+einem weit bemessenen Budget; ein zu Unrecht gelöschter kostet Quelle,
+Fundstelle und die Arbeit seiner Beschaffung — und fehlt genau dann, wenn der
+seltene Fall eintritt, für den er aufgenommen wurde.
+
+Nichtnutzung ist ausserdem ein schwaches Signal. Sie kann heissen: der Claim
+ist überflüssig. Sie kann genauso heissen: die Evals decken sein Thema nicht
+ab, oder der Index findet ihn nicht. Die letzten beiden Fälle behebt Löschen
+nicht — dort fehlt ein Eval oder ein Stichwort.
+
+### Quellenstand
+
+{knowledge_verify_block}
+
+Aus `knowledge.py verify <ziel-SKILL.md>`. `stale` heisst: die Quelle hat sich
+geändert und die abhängigen Claims beschreiben einen Stand, den es nicht mehr
+gibt. Aktualisiert wird nichts automatisch.
+
 ## Effizienz
 
 Effizienz entscheidet nichts. Sie steht hier, weil Token- und Laufzeitkosten

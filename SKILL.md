@@ -1191,11 +1191,13 @@ Lies `templates/morning_report.md` und erzeuge einen Abschlussbericht:
 9. **Transfer**: Falls ein Transfer-Set konfiguriert ist, beide Werte und die
    Richtung auf val. Gegenläufige Richtungen sind die Signatur eines
    Notbehelfs
-10. **Offene Wissensfragen**: Der Block aus
+10. **Wissensbestand**: Grösse, Quellenstand aus `verify`, und die nie
+    gelesenen Claims als Vorschlag — keine Löschliste
+11. **Offene Wissensfragen**: Der Block aus
    `python3 scripts/knowledge.py gap-format <workspace>/knowledge-gaps.jsonl`.
    Jede Frage ist ein Fehler, den keine Umformulierung behebt. Steht der Block
    leer, gehört genau das hin statt eines weggelassenen Abschnitts
-11. **Empfehlungen**: Was der User als nächstes tun könnte
+12. **Empfehlungen**: Was der User als nächstes tun könnte
 
 Speichere den Report als `morning-report.md` im Workspace.
 
@@ -1332,6 +1334,7 @@ Standardwerte, die der User überschreiben kann:
 | `knowledge_enabled` | true | Wissenszweig aktiv. Auf `false` wird `KNOWLEDGE_GAP` nicht klassifiziert |
 | `knowledge_inbox` | `<workspace>/knowledge-inbox` | Vom User bereitgestelltes Rohmaterial |
 | `knowledge_budget` | `4 × token_budget` | Deckel für `knowledge/pages/`, getrennt vom strengen Budget |
+| `knowledge_stale_experiments` | 20 | Ab wie vielen Experimenten ohne Lesezugriff ein Claim als Prune-Vorschlag im Report erscheint |
 | `vault_coverage_threshold` | 0.6 | Ab welchem Deckungsgrad `gap-append` eine Frage als vom Bestand beantwortet abweist |
 | `token_budget` | (berechnet) | `max(2000, ceil(initial * 1.25))`, vom Wizard gesetzt |
 | `chars_per_token` | 3 | Divisor der Token-Schätzung, 3 für deutsche Texte |
@@ -1618,6 +1621,28 @@ Prüft Struktur, Provenienz und Quellendrift, mit drei Abstufungen:
   Skill sofort rot.
 
 `verify` gehört in den Lauf nach jedem `claim-add` und vor jeden Report.
+
+**Nie gelesene Claims:**
+
+```bash
+python3 scripts/knowledge.py prune-suggest <workspace>/knowledge-usage.json \
+  --skill <ziel-SKILL.md>
+```
+
+Claims, die über `knowledge_stale_experiments` Experimente (Default 20) nie
+gelesen wurden. **Ein Vorschlag, keine Löschung** — der Loop entfernt im
+Auto-Modus keinen Claim, und der Befehl schreibt nichts.
+
+Die Asymmetrie dahinter: ein zu Unrecht behaltener Claim kostet ein paar Token
+in einem weit bemessenen Budget. Ein zu Unrecht gelöschter kostet Quelle,
+Fundstelle und die Arbeit seiner Beschaffung — und er fehlt genau dann, wenn
+der seltene Fall eintritt, für den er aufgenommen wurde. Dafür wird ein
+Bestand gepflegt.
+
+Nichtnutzung ist zudem ein schwaches Signal. Sie kann heissen: der Claim ist
+überflüssig. Sie kann genauso heissen: die Evals decken sein Thema nicht ab,
+oder der Index findet ihn nicht — Löschen behebt beides nicht. Der Report
+nennt die drei Lesarten, damit die Entscheidung informiert fällt.
 
 ### Was schon im Bestand liegt, ist keine Lücke
 
@@ -1948,4 +1973,5 @@ vorher aus.
 | `templates/morning_report.md` | Report-Template mit Coverage-Sektion |
 | `templates/agent_context.md` | Dynamic Context Template für Agent-Prompt-Augmentation (v3) |
 | `examples/generic-mode-lauf.md` | Ein durchgelaufener Generic-Loop mit ausgelösten Sperren |
+| `examples/wissensluecke-lauf.md` | Ein durchgelaufener Wissenspfad: Lücke, Beschaffung, fünf Gates, Drift |
 | `references/architecture.md` | Detaillierte Architektur-Doku |

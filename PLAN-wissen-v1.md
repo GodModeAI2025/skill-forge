@@ -18,8 +18,9 @@ jenem Repository.
   Ergebnisse aus Runs mit Bestandszugriff, und der entdeckelte Musterbestand
   des Optimierers an Stelle von `editing-notes.md` (Abschnitt 14).
 
-Offen sind Phase 3 (freigegebene Quellen), die Prune-Vorschläge aus Phase 4
-und Phase 5.
+Phase 4 ist damit abgeschlossen (Nutzungsverfolgung, Veralterung, Supersession,
+Prune-Vorschläge, Beispiel-Lauf). Offen sind Phase 3 (freigegebene Quellen) und
+Phase 5.
 
 **Zu den Fragen in Abschnitt 13:** Frage 1 und 2 sind entschieden — der Bestand
 liegt beim Ziel-Skill und der Loop darf dort `knowledge/` anlegen. Grundlage
@@ -513,7 +514,7 @@ mitoptimierte Wert und wird weiterhin genau zweimal angefasst.
 | `templates/agent_context.md` | Offene Gaps und Bestandsüberblick in den Laufzeitkontext | 2 |
 | `references/architecture.md` | Zwei-Spuren-Modell, Budget-Trennung, Sicherheitsgrenzen | 2 |
 | `tests/test_knowledge.py` | **Neu.** Provenienz, Leak-Check, Injection, Secrets, Widerspruch, Index-Determinismus, Budget-Trennung, `DEFERRED`-Ablauf | 1–4 |
-| `examples/wissensluecke-lauf.md` | **Neu.** Ein durchgelaufenes Beispiel mit ausgelösten Sperren, analog `generic-mode-lauf.md` | 4 |
+| `examples/wissensluecke-lauf.md` | **Umgesetzt.** Ein durchgelaufener Pfad mit echten Ausgaben: Lücke, Beschaffung, drei ausgelöste Gates, Bestands-Check, DEFERRED, Drift | 4 |
 
 Warum ein eigenes `scripts/knowledge.py` und nicht mehr Subcommands in
 `composite_score.py`: die Entscheidungslogik dort ist durch 283 Tests

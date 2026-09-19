@@ -27,7 +27,9 @@ from scripts.knowledge import (
     ngrams,
     append_gap,
     format_usage,
+    format_prune,
     parse_frontmatter,
+    prune_suggestions,
     read_sources,
     scan_transcripts,
     search_vault,
@@ -672,3 +674,97 @@ def test_cli_search_exit_code_signals_coverage(skill):
                "Welchen Belegstil verlangt der Verlag im Fliesstext?").returncode == 0
     assert run("search", skill["path"],
                "Wie hoch ist die Verguetung pro Druckbogen?").returncode == 1
+
+
+# ─── Prune-Vorschläge ─────────────────────────────────────────────────────
+
+
+def _usage_over(path, skill, experiments, reading):
+    """Simuliert N Experimente, in denen nur `reading` gelesen wurde."""
+    for i in range(1, experiments + 1):
+        exp = Path(path).parent / ("exp-%03d" % i)
+        if reading:
+            _transcript(exp, "eval-0", "with_mutation", " ".join(reading))
+        else:
+            _transcript(exp, "eval-0", "with_mutation", "nichts zitiert")
+        update_usage(str(path), skill, str(exp), "exp-%03d" % i)
+
+
+def test_a_never_read_claim_becomes_a_suggestion(skill, tmp_path):
+    write(skill, claim("Im Fliesstext steht der Kurzbeleg."))
+    write(skill, claim("Ein zweiter, ganz anderer Sachverhalt aus dem Leitfaden."))
+    usage = tmp_path / "usage.json"
+    _usage_over(usage, skill["path"], 20, ["C-0001"])
+
+    result = prune_suggestions(str(usage), skill["path"])
+    assert [s["claim_id"] for s in result["suggestions"]] == ["C-0002"]
+    assert result["suggestions"][0]["experiments_since_use"] == 20
+
+
+def test_below_the_threshold_nothing_is_suggested(skill, tmp_path):
+    """Ein Bestand wird für den seltenen Fall gepflegt.
+
+    Drei Experimente ohne Lesezugriff sagen nichts darüber, ob ein Claim
+    überflüssig ist.
+    """
+    write(skill, claim("Im Fliesstext steht der Kurzbeleg."))
+    usage = tmp_path / "usage.json"
+    _usage_over(usage, skill["path"], 3, [])
+
+    result = prune_suggestions(str(usage), skill["path"])
+    assert result["suggestions"] == []
+    assert "zu wenige Experimente" in result["reason"]
+
+
+def test_a_superseded_claim_is_not_suggested_again(skill, tmp_path):
+    """Es ist schon als veraltet markiert; ein zweiter Vorschlag hilft nicht."""
+    write(skill, claim("Die Frist betraegt vierzehn Tage nach Zugang."))
+    write(skill, claim("Die Frist betraegt dreissig Tage nach Zugang."),
+          allow_near_duplicate=True, supersedes=["C-0001"])
+    usage = tmp_path / "usage.json"
+    _usage_over(usage, skill["path"], 20, ["C-0002"])
+
+    assert prune_suggestions(str(usage), skill["path"])["suggestions"] == []
+
+
+def test_the_block_says_it_is_not_a_delete_list(skill, tmp_path):
+    """Nichtnutzung ist ein schwaches Signal.
+
+    Sie kann heissen: der Claim ist überflüssig. Sie kann genauso heissen: die
+    Evals decken sein Thema nicht ab. Löschen behebt nur den ersten Fall.
+    """
+    write(skill, claim("Im Fliesstext steht der Kurzbeleg."))
+    write(skill, claim("Ein zweiter, ganz anderer Sachverhalt aus dem Leitfaden."))
+    usage = tmp_path / "usage.json"
+    _usage_over(usage, skill["path"], 20, ["C-0001"])
+
+    block = format_prune(str(usage), skill["path"])
+    assert "keine Löschliste" in block
+    assert "Evals sein Thema nicht abdecken" in block
+    assert "C-0002" in block
+    assert "C-0001" not in block
+
+
+def test_without_usage_data_there_is_no_suggestion(skill, tmp_path):
+    write(skill, claim("Im Fliesstext steht der Kurzbeleg."))
+    result = prune_suggestions(str(tmp_path / "fehlt.json"), skill["path"])
+    assert result["suggestions"] == []
+    assert result["reason"] == "keine Nutzungsdaten"
+    assert format_prune(str(tmp_path / "fehlt.json"), skill["path"]) == ""
+
+
+def test_cli_prune_suggest_never_writes(skill, tmp_path):
+    """Der Befehl schlägt vor. Löschen bleibt Handarbeit."""
+    write(skill, claim("Im Fliesstext steht der Kurzbeleg."))
+    write(skill, claim("Ein zweiter, ganz anderer Sachverhalt aus dem Leitfaden."))
+    usage = tmp_path / "usage.json"
+    _usage_over(usage, skill["path"], 20, ["C-0001"])
+    before = (knowledge_root(skill["path"]) / "pages" / "belegregeln.md").read_text(
+        encoding="utf-8")
+
+    result = run("prune-suggest", str(usage), "--skill", skill["path"])
+    assert result.returncode == 0
+    assert "C-0002" in result.stdout
+    after = (knowledge_root(skill["path"]) / "pages" / "belegregeln.md").read_text(
+        encoding="utf-8")
+    assert before == after, "der Bestand ist unverändert"

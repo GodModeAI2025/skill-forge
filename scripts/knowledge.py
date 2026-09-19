@@ -30,7 +30,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 
 
 # ─── Status ───────────────────────────────────────────────────────────────
@@ -1326,6 +1326,89 @@ def update_usage(usage_path: str, skill_path: str, experiment_dir: str,
     return usage
 
 
+# Ab wie vielen Experimenten ohne einen einzigen Lesezugriff ein Claim als
+# Vorschlag im Report auftaucht. Bewusst hoch: ein Bestand wird für den Fall
+# gepflegt, der selten eintritt, und genau dann ist er wertvoll.
+STALE_EXPERIMENTS = 20
+
+
+def prune_suggestions(usage_path: str, skill_path: str,
+                      stale_after: int = STALE_EXPERIMENTS) -> dict:
+    """Claims, die über viele Experimente nie gelesen wurden.
+
+    **Ein Vorschlag, keine Löschung.** Der Loop entfernt im Auto-Modus keinen
+    Claim, und zwar aus einem asymmetrischen Grund: ein zu Unrecht behaltener
+    Claim kostet ein paar Token im Bestandsbudget, das ohnehin weit bemessen
+    ist; ein zu Unrecht gelöschter kostet die Quelle, die Fundstelle und die
+    Arbeit, die in seiner Beschaffung steckte — und er fehlt genau dann, wenn
+    der seltene Fall eintritt, für den er aufgenommen wurde.
+
+    Nichtnutzung ist ausserdem ein schwaches Signal. Sie kann heissen: der
+    Claim ist überflüssig. Sie kann genauso heissen: die Evals decken sein
+    Thema nicht ab, oder der Index findet ihn nicht. Die beiden letzten Fälle
+    behebt man nicht durch Löschen, und deshalb nennt die Ausgabe sie mit.
+    """
+    path = Path(usage_path)
+    if not path.exists():
+        return {"suggestions": [], "experiments": 0, "stale_after": stale_after,
+                "reason": "keine Nutzungsdaten"}
+    usage = json.loads(path.read_text(encoding="utf-8"))
+    seen = len(usage.get("experiments", []))
+    totals = usage.get("totals", {})
+    claims = {c["claim_id"]: c for c in all_claims(skill_path)}
+
+    suggestions = []
+    for claim_id, row in sorted(totals.items()):
+        if row.get("uses", 0) > 0:
+            continue
+        if row.get("experiments_since_use", 0) < stale_after:
+            continue
+        claim = claims.get(claim_id)
+        if claim is None or claim.get("status") == "veraltet":
+            continue
+        suggestions.append({
+            "claim_id": claim_id,
+            "slug": claim["slug"],
+            "source": claim["source"],
+            "experiments_since_use": row["experiments_since_use"],
+            "text": claim["text"][:140],
+        })
+    return {
+        "suggestions": suggestions,
+        "experiments": seen,
+        "stale_after": stale_after,
+        "reason": "" if seen >= stale_after else
+                  "zu wenige Experimente für eine Aussage",
+    }
+
+
+PRUNE_HEADER = (
+    "Nie gelesene Claims. Das ist ein Vorschlag an den Menschen, keine "
+    "Löschliste: Nichtnutzung kann heissen, dass der Claim überflüssig ist — "
+    "oder dass die Evals sein Thema nicht abdecken, oder dass der Index ihn "
+    "nicht findet. Die letzten beiden Fälle behebt Löschen nicht."
+)
+
+
+def format_prune(usage_path: str, skill_path: str,
+                 stale_after: int = STALE_EXPERIMENTS) -> str:
+    result = prune_suggestions(usage_path, skill_path, stale_after)
+    if not result["suggestions"]:
+        return ""
+    lines = [PRUNE_HEADER, "",
+             "Stand nach %d Experimenten, Schwelle %d:"
+             % (result["experiments"], result["stale_after"]), ""]
+    for entry in result["suggestions"]:
+        lines.append("- **%s** (%s, Quelle %s, seit %d Experimenten ungelesen): %s" % (
+            entry["claim_id"], entry["slug"], entry["source"],
+            entry["experiments_since_use"], _flatten(entry["text"]),
+        ))
+    lines += ["", "Entfernen heisst: den Claim aus der Seite streichen und "
+                  "`knowledge.py index` neu laufen lassen. Im Zweifel stehen "
+                  "lassen — der Bestand wird für den seltenen Fall gepflegt."]
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def format_usage(usage_path: str, experiment_id: str | None = None) -> str:
     """Block für den Hypothesis-Agenten.
 
@@ -1498,6 +1581,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ufmt.add_argument("usage_path")
     ufmt.add_argument("--experiment")
+
+    prune = sub.add_parser(
+        "prune-suggest",
+        help="Nie gelesene Claims als Vorschlag für den Report. Löscht nichts",
+    )
+    prune.add_argument("usage_path")
+    prune.add_argument("--skill", required=True)
+    prune.add_argument("--stale-after", type=int, default=STALE_EXPERIMENTS)
+    prune.add_argument("--as-json", action="store_true")
 
     return parser
 
@@ -1691,6 +1783,17 @@ def main(argv: list | None = None) -> int:
         block = format_usage(args.usage_path, args.experiment)
         if block:
             print(block, end="")
+        return 0
+
+    if args.command == "prune-suggest":
+        if args.as_json:
+            print(json.dumps(
+                prune_suggestions(args.usage_path, args.skill, args.stale_after),
+                indent=2, ensure_ascii=False))
+        else:
+            block = format_prune(args.usage_path, args.skill, args.stale_after)
+            if block:
+                print(block, end="")
         return 0
 
     return 1

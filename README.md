@@ -111,7 +111,7 @@ fall into four groups.
 
 ### And it is tested
 
-400 tests under `tests/` (`python3 -m pytest tests/ -q`), including `test_review_findings.py`, which pins every
+406 tests under `tests/` (`python3 -m pytest tests/ -q`), including `test_review_findings.py`, which pins every
 defect two adversarial review rounds found in this code. A mutation test over 69
 targeted code changes drove the remaining blind spots out.
 
@@ -231,6 +231,7 @@ a list of open questions, and the two fail in different ways.
 | `search` | Does the vault already answer this question? Exit 0 = yes |
 | `usage-update` | Records from the transcripts which run read which claims |
 | `usage-format` | The usage block rendered into the hypothesis agent's context |
+| `prune-suggest` | Claims never read across many experiments. Suggests; writes nothing |
 
 `scripts/patterns.py` holds the optimizer's own memory — what kind of edit works
 *for this skill*. Separate from `knowledge.py` on purpose: that one holds the
@@ -419,6 +420,7 @@ skill-forge/
 │   └── scheduled_task_template.md    # Cron job setup (both modes)
 ├── examples/
 │   ├── generic-mode-lauf.md          # A real end-to-end generic run, with the guards firing
+│   ├── wissensluecke-lauf.md         # A real end-to-end knowledge run: gap, sourcing, five gates, drift
 │   └── fachbuch-lektorat-session.md  # Real experiment log
 ├── conftest.py                       # Puts the repo root on sys.path for pytest
 ├── tests/
@@ -730,6 +732,22 @@ the subtle case. The exit is still right, because the alternative — a silent
 overwrite — loses sourced knowledge without a trace. To really replace a claim,
 pass `--supersedes C-nnnn`: the old one becomes `veraltet`, not deleted.
 
+### Pruning suggests, it does not delete
+
+`prune-suggest` lists claims never read across `knowledge_stale_experiments`
+(default 20) experiments. The loop deletes nothing in auto mode, and the
+command writes nothing.
+
+The asymmetry: a claim wrongly kept costs a few tokens in a generously sized
+budget. A claim wrongly deleted costs its source, its passage and the work of
+acquiring it — and it is missing precisely when the rare case arrives that it
+was taken in for. That is what a vault is maintained for.
+
+Non-use is also a weak signal. It can mean the claim is superfluous. It can
+equally mean the evals do not cover its topic, or the index does not surface
+it — and deleting fixes neither. The report names all three readings so the
+decision is an informed one.
+
 ### Maintenance
 
 `knowledge.py verify` checks structure, provenance and source drift, with three
@@ -853,6 +871,7 @@ file against a baseline it no longer matches.
 | `knowledge_inbox` | `<workspace>/knowledge-inbox` | Raw material supplied by the user |
 | `knowledge_budget` | `4 × token_budget` | Cap on `knowledge/pages/`, separate from the strict budget |
 | `vault_coverage_threshold` | 0.6 | Coverage at which `gap-append` rejects a question the vault already answers |
+| `knowledge_stale_experiments` | 20 | Experiments without a read before a claim becomes a prune suggestion |
 
 ## Tests
 
@@ -860,7 +879,7 @@ file against a baseline it no longer matches.
 python3 -m pytest tests/ -q
 ```
 
-400 tests across thirteen files. They cover the decision cascade and its threshold edge cases,
+406 tests across thirteen files. They cover the decision cascade and its threshold edge cases,
 gate scoring and `--side`, the three-way split, diff and comparison, protected regions and
 the appendix, the rejected buffer, the token budget, the invariant checks, generic mode,
 and every CLI exit code, plus the knowledge-gap queue, the `DEFERRED` path, and the five gates guarding the vault.
