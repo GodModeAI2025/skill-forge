@@ -138,7 +138,11 @@ deliberate reward hacks were each rejected.
        │ PASS
        ▼
 ┌──► Hypothesis ── train split only
-│     │            classify defect vs lapse, three candidates, rank, pick one
+│     │            classify lapse / knowledge gap / defect, three candidates,
+│     │            rank, pick one
+│     ▼
+│    knowledge gap? ── yes ──► gap-append, ask the human ──────────────► DEFERRED
+│     │ no
 │     ▼
 │    snapshot ─────────── state before experiment N
 │    invariants-snapshot ─ protected paths, file count, byte size
@@ -204,6 +208,17 @@ goes through one of them.
 | `compact` / `agent-history` / `group-history` | History views for the agents |
 | `checkpoint-save` / `checkpoint-info` | Resume across sessions and crashes |
 
+`scripts/knowledge.py` holds the knowledge-gap queue. Separate script, separate
+test file: `composite_score.py` turns two numbers into a verdict, this one keeps
+a list of open questions, and the two fail in different ways.
+
+| Subcommand | Purpose |
+|---|---|
+| `gap-append` | Records a knowledge gap if it is new. Rejects a question backed by fewer than two train evals |
+| `gap-resolve` | Appends a new state (answered, sourced, rejected, conflict). Never overwrites |
+| `gap-list` / `gap-stats` | Current state per gap, counts per status |
+| `gap-format` | The block rendered into the agent prompt and the morning report |
+
 ### The five agents
 
 | Agent | Role | Input | Output |
@@ -267,6 +282,12 @@ delta >  threshold    →  KEEP      # clear improvement, mutation stays
 delta < -regression   →  REVERT    # regression, roll back
 otherwise             →  NEUTRAL   # roll back as well
 ```
+
+`DEFERRED` is not a fourth outcome of `decide()`. Like `SKIP`, `INVALID` and `NO_OP`
+it comes from the surrounding flow: the hypothesis agent found a missing *fact*
+rather than a missing instruction, so there was no mutation and nothing to measure.
+The loop writes the question to `knowledge-gaps.jsonl` and moves on — see
+[Knowledge gaps](#knowledge-gaps).
 
 `near_miss` is a boolean flag on NEUTRAL, not a separate outcome. It is true when
 `delta > threshold - near_miss_band` (default band 0.02), the range just below the keep
@@ -348,6 +369,7 @@ Time budget: 120 minutes
 skill-forge/
 ├── SKILL.md                          # Main skill instructions (v3)
 ├── RELEASE_NOTES.md                  # Changelog (v3 + v2)
+├── PLAN-wissen-v1.md                 # Plan for knowledge gaps (phase 1 shipped)
 ├── agents/
 │   ├── hypothesis.md                 # Failure analysis → hypothesis
 │   ├── meta.md                   # Optimizer-side memory, every 5 experiments
@@ -356,7 +378,8 @@ skill-forge/
 │   └── orchestrator.md               # Context assembly, handover, checkpoints
 ├── scripts/
 │   ├── __init__.py
-│   └── composite_score.py            # Score, decide, snapshot/revert, TSV, coverage
+│   ├── composite_score.py            # Score, decide, snapshot/revert, TSV, coverage
+│   └── knowledge.py                  # Knowledge-gap queue: append, dedupe, resolve, render
 ├── templates/
 │   ├── morning_report.md             # Report template with coverage matrix
 │   └── agent_context.md              # Runtime context injected into agent prompts
@@ -377,7 +400,8 @@ skill-forge/
 │   ├── test_block2.py                # Resolution, splits, diff, comparison
 │   ├── test_block3.py                # Protected regions, appendix, rejected
 │   ├── test_block4.py                # Token budget, invariants
-│   └── test_review_findings.py       # Every defect the adversarial review found
+│   ├── test_review_findings.py       # Every defect the adversarial review found
+│   └── test_knowledge.py             # Gap queue, evidence rule, dedupe, DEFERRED
 ├── LICENSE                           # MIT
 └── README.md
 ```
@@ -392,6 +416,7 @@ skill-forge/
 ├── coverage-matrix.json     # Category coverage tracking
 ├── checkpoint.json          # Resume point (on-disk version, applied_but_undecided)
 ├── rejected.jsonl           # Every non-KEEP verbatim, survives compaction
+├── knowledge-gaps.jsonl     # Missing facts as questions, append-only
 ├── editing-notes.md         # Optimizer-side memory, rewritten every 5 experiments
 ├── snapshots/
 │   ├── pre-exp-001/         # State before exp-001, the baseline
@@ -476,6 +501,60 @@ Tracks which categories of improvements have been tried, with saturation detecti
 | **Eval rotation in train only** | Fresh queries replace the oldest train evals after 5 experiments. val and test stay frozen; changing val forces a re-baseline |
 | **Longitudinal comparison** | `compare` lists regressions individually instead of netting them against improvements |
 | **Success protection list** | `success_patterns` stop `prune` from removing the sections that carry the passing evals |
+| **No invented facts** | A missing fact is reported as a question, never filled in from model memory. A plausible-sounding invention passes assertions better than a clumsy truth, so the gate would reward it |
+
+## Knowledge gaps
+
+Not every failure is a wording failure. If the skill does not know a publisher's
+citation rule or an internal API's actual signature, no rephrasing fixes it: a
+**fact** is missing, not a behaviour.
+
+The loop detects those cases and does not invent the answer. It asks.
+
+The hypothesis agent classifies each failure pattern in a three-step cascade —
+was the rule already there and ignored (`EXECUTION_LAPSE`), would a perfect
+instruction have been enough or is a fact required (`KNOWLEDGE_GAP`), otherwise
+`SKILL_DEFECT`. Four mechanical markers separate fact from form: the failing
+assertion checks a value rather than a shape, the agent asserted something
+concrete that was wrong, the answers vary across runs, the agent searched and
+found nothing. In genuine doubt it is never a knowledge gap — that branch is the
+expensive one, it interrupts a human and creates maintenance.
+
+A knowledge gap produces no mutation. It produces a question with four fields,
+recorded in `knowledge-gaps.jsonl`, and the experiment ends as `DEFERRED`:
+
+```
+gap-003 [open]
+Question:    Which citation style does publisher X require in running text?
+Evidence:    3/4 train evals with in-text citations fail 'beleg_kurzform'
+Useful answer: One rule, short or full citation, plus the exceptions
+Backed by:   belege-fliesstext, belege-fussnote, belege-tabelle
+```
+
+`answer_shape` is not decoration. It is the difference between a question a human
+answers in thirty seconds and one they dismiss.
+
+**The auto mode does not block on it.** An overnight run cannot ask anyone.
+Blocking would stall the loop; answering itself would invent facts. `DEFERRED` is
+the third way: the question is asked and written down, and the loop keeps working
+on wording and determinism. So the run delivers a better skill *and* a short list
+of precise questions that take five minutes to answer in the morning.
+
+Rules the script enforces, not the prompt: at least two train evals must show the
+pattern (`eval_ids`, not a counter); one gap per experiment; a cap per run
+(`max_deferred_per_run`, default 3) after which `knowledge` is deprioritized; no
+question twice, and a rejected one stays blocked. A question already `answered`
+whose failure pattern returns is not a knowledge gap — the knowledge is not
+reaching the agent, which is a `SKILL_DEFECT`.
+
+`DEFERRED` is filtered out of the plateau window rather than counted as a
+non-KEEP. Counting it would end a run over unanswered questions although no
+hypothesis failed; letting it break the streak would make one question every
+three rounds suppress plateau detection entirely.
+
+This is phase 1: detect and ask. Taking knowledge in, storing it evidence-bound
+and maintaining it is phases 2 to 4 — see `PLAN-wissen-v1.md`. Nothing writes a
+knowledge base yet.
 
 ## Crash recovery
 
@@ -528,6 +607,9 @@ file against a baseline it no longer matches.
 | `max_scope_files` | 200 | Upper bound on the scope glob |
 | `meta_memory_interval` | 5 | How often `editing-notes.md` is rewritten |
 | `meta_memory_max_bullets` | 8 | Cap on the meta notes |
+| `max_knowledge_gaps_per_experiment` | 1 | How many knowledge gaps one round may report |
+| `max_deferred_per_run` | 3 | How often a run may answer with a question instead of a mutation before `knowledge` is deprioritized |
+| `gap_limit` | 10 | How many open questions go into the agent prompt |
 
 ## Tests
 
@@ -535,10 +617,10 @@ file against a baseline it no longer matches.
 python3 -m pytest tests/ -q
 ```
 
-283 tests across ten files. They cover the decision cascade and its threshold edge cases,
+316 tests across eleven files. They cover the decision cascade and its threshold edge cases,
 gate scoring and `--side`, the three-way split, diff and comparison, protected regions and
 the appendix, the rejected buffer, the token budget, the invariant checks, generic mode,
-and every CLI exit code.
+and every CLI exit code, plus the knowledge-gap queue and the `DEFERRED` path.
 
 `test_review_findings.py` is the interesting one: it pins every defect the two adversarial
 review rounds found in this code, plus the blind spots a mutation test over 69 targeted

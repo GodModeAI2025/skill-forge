@@ -356,6 +356,7 @@ Nach Bestätigung:
 ├── history.json            # Fortschritts-Tracking (mit Tiered Compaction)
 ├── history.archive.jsonl   # Volldatensätze der komprimierten Experimente
 ├── rejected.jsonl          # Nicht-KEEP im Wortlaut, kompaktierungsfest
+├── knowledge-gaps.jsonl    # Erkannte Wissenslücken als Fragen, append-only
 ├── editing-notes.md        # Meta-Memory des Optimierers, alle 5 Experimente
 ├── checkpoint.json         # Resume-Point für Session-Übergreifendes Fortsetzen
 ├── experiment-log.tsv      # Flaches Log für schnelles Monitoring
@@ -485,6 +486,10 @@ Vor jedem Agent-Aufruf wird der Agent-Prompt dynamisch angereichert:
    - Der Block aus `rejected-format <workspace>/rejected.jsonl --limit 10`,
      also die bereits verworfenen Versuche im Wortlaut. Near-Misses sind darin
      als Teilmenge markiert.
+   - Der Block aus
+     `python3 scripts/knowledge.py gap-format <workspace>/knowledge-gaps.jsonl --limit 10`,
+     also die bereits gemeldeten Wissenslücken. Ohne ihn stellt der
+     Hypothesis-Agent jede Nacht dieselbe Frage.
 3. Hänge den gefüllten Context an den jeweiligen Agent-Prompt an
 4. Context-Budget-Regel: Max 30% des Agent-Contexts für History, Coverage,
    Meta-Notizen und den Rejected-Block. 70% für die aktuelle Aufgabe.
@@ -526,9 +531,14 @@ Lies den `agents/hypothesis.md` Agent-Prompt und folge seinen Anweisungen:
 3. Identifiziere die schwächsten Bereiche (welche Assertions/Metriken failen?)
 4. Lies die Transcripts der fehlgeschlagenen train-Runs (Skill-Modus) oder den
    Command-Output (Generic-Modus). Transcripts aus val und test bleiben zu.
-5. Klassifiziere jedes Failure-Pattern als `SKILL_DEFECT` oder
-   `EXECUTION_LAPSE` (agents/hypothesis.md, Abschnitt 2c). Im Zweifel LAPSE.
+5. Klassifiziere jedes Failure-Pattern als `SKILL_DEFECT`, `EXECUTION_LAPSE`
+   oder `KNOWLEDGE_GAP` (agents/hypothesis.md, Abschnitt 2c). Steht die Regel
+   schon da: LAPSE. Fehlt eine Tatsache statt Klarheit: KNOWLEDGE_GAP. Im
+   Zweifel weder noch, sondern SKILL_DEFECT.
    LAPSE-Befunde erzeugen keine Mutation, sondern `appendix_notes`.
+   KNOWLEDGE_GAP-Befunde erzeugen keine Mutation, sondern einen
+   `knowledge_request` — siehe „Wissenslücken" weiter unten. Diese Runde endet
+   dann mit `DEFERRED`, und die Schritte 2 bis 5 entfallen.
 6. Sieh dir auch die bestandenen train-Evals an. Die `success_patterns` sind die
    Schutzliste, die den Mutator davon abhält, tragende Abschnitte zu prunen.
 7. Formuliere DREI Kandidaten, ranke sie nach der Rubrik in
@@ -799,8 +809,18 @@ sind in `tsv-append` und `coverage-update` erlaubt:
 | `SKIP` | Agent-Output nicht verwertbar, Command zweimal gecrasht, Experiment nicht zu Ende gebracht |
 | `INVALID` | Eine Invariante wurde verletzt, das Ergebnis ist nicht vergleichbar |
 | `NO_OP` | Die Mutation hat byteweise nichts geändert. Erzeugt in Schritt 2 aus `diff` mit `changed: false`; kein Eval-Run, kein Scoring |
+| `DEFERRED` | Der Hypothesis-Agent hat eine Wissenslücke gemeldet statt einer Mutation. Kein Snapshot, kein Eval-Run, kein Scoring; stattdessen eine Frage in `knowledge-gaps.jsonl`. Siehe „Wissenslücken" |
 
-Alle drei zählen nicht in die Sättigung und nicht in `best_delta`.
+Alle vier zählen nicht in die Sättigung und nicht in `best_delta`.
+
+`DEFERRED` ist zusätzlich das einzige davon, das **nicht** ins Plateau-Fenster
+zählt. `is_plateau` filtert es vor dem Fenster heraus und füllt es auch nicht
+auf. Bei `SKIP`, `INVALID` und `NO_OP` ist etwas kaputt oder wirkungslos, und
+drei davon in Folge sind ein Grund anzuhalten. Bei `DEFERRED` ist nichts kaputt:
+es liegt eine offene Frage vor, und das Mittel dagegen liegt beim Menschen.
+Zählte es mit, beendete eine Serie unbeantworteter Fragen den Lauf, obwohl keine
+einzige Hypothese gescheitert ist. Der eigene Deckel dafür ist
+`max_deferred_per_run`.
 
 Bei `REVERT` und bei `NEUTRAL` wird derselbe Befehl ausgeführt:
 
@@ -980,6 +1000,7 @@ Im Guided-Modus: Zeige dem User den bisherigen Fortschritt (Score-Verlauf, Cover
 - `max_experiments` erreicht (Standard: 10)
 - 3 aufeinanderfolgende Nicht-KEEP → Plateau erreicht. Prüfen mit
   `python3 scripts/composite_score.py plateau <workspace>/history.json --window 3`
+  (`DEFERRED` wird dabei herausgefiltert und zählt nicht mit)
 - Zeitbudget aufgebraucht (für Scheduled Tasks)
 - 3 aufeinanderfolgende CRASH → Infrastruktur-Problem, Loop stoppen
 - Guided-Modus: User sagt "Stopp"
@@ -1026,7 +1047,11 @@ Lies `templates/morning_report.md` und erzeuge einen Abschlussbericht:
 6. **Fehlgeschlagene Hypothesen**: Was nicht funktioniert hat (und warum)
 7. **Coverage-Matrix**: Welche Bereiche wie oft getestet, wo Lücken bestehen
 8. **Score-Verlauf**: Grafische Darstellung als ASCII-Chart
-9. **Empfehlungen**: Was der User als nächstes tun könnte
+9. **Offene Wissensfragen**: Der Block aus
+   `python3 scripts/knowledge.py gap-format <workspace>/knowledge-gaps.jsonl`.
+   Jede Frage ist ein Fehler, den keine Umformulierung behebt. Steht der Block
+   leer, gehört genau das hin statt eines weggelassenen Abschnitts
+10. **Empfehlungen**: Was der User als nächstes tun könnte
 
 Speichere den Report als `morning-report.md` im Workspace.
 
@@ -1049,6 +1074,7 @@ bearbeitet wurden — und lenkt den Hypothesis-Agent aktiv in unterversorgte Geb
 | `efficiency` | Token-Verbrauch, Laufzeit, Redundanz | Prosa gestrafft, Script optimiert |
 | `scripts` | Helper-Scripts, Validierung, Automatisierung | Script hinzugefügt/gefixt |
 | `structure` | Skill-Aufbau, Abschnittsreihenfolge | Abschnitte umorganisiert |
+| `knowledge` | Fehlende Fakten statt fehlender Klarheit | Wissenslücke gemeldet (`DEFERRED`) |
 
 ### Generic-Modus Kategorien
 
@@ -1105,7 +1131,7 @@ Eine Kategorie gilt als **saturiert**, wenn:
 - Mindestens 3 gemessene Experimente durchgeführt wurden UND
 - Keines davon den Score um mehr als 0.01 verbessert hat
 
-`INVALID`, `SKIP` und `NO_OP` zählen nicht als gemessen. Sonst gilt eine Kategorie als
+`INVALID`, `SKIP`, `NO_OP` und `DEFERRED` zählen nicht als gemessen. Sonst gilt eine Kategorie als
 abgegrast, obwohl sie nie wirklich getestet wurde. Der Status wird bei jedem Update neu
 berechnet, eine Kategorie kann also auch wieder aus der Sättigung herausfallen.
 
@@ -1155,6 +1181,9 @@ Standardwerte, die der User überschreiben kann:
 | `appendix_max_notes` | 15 | Deckel für LAPSE-Notizen in der geschützten Region |
 | `rejected_limit` | 10 | Wie viele verworfene Versuche in den Prompt gehen |
 | `min_support_count` | 2 | Mindestzahl der train-Evals, in denen ein Muster auftritt |
+| `max_knowledge_gaps_per_experiment` | 1 | Wie viele Wissenslücken eine Runde melden darf |
+| `max_deferred_per_run` | 3 | Wie oft ein Lauf eine Frage statt einer Mutation liefert, bevor `knowledge` deprioritisiert wird |
+| `gap_limit` | 10 | Wie viele offene Fragen in den Agent-Prompt gehen |
 | `token_budget` | (berechnet) | `max(2000, ceil(initial * 1.25))`, vom Wizard gesetzt |
 | `chars_per_token` | 3 | Divisor der Token-Schätzung, 3 für deutsche Texte |
 | `protected_paths` | [] | Pfade, die der Loop nie ändert (Generic-Modus, Pflicht) |
@@ -1192,6 +1221,111 @@ Generiere am Ende einen morning-report.md.
    - `experiment-log.tsv` für schnellen Überblick
    - Die verbesserte Version (falls Verbesserungen gefunden)
    - Vollständige Experiment-Logs für Nachvollziehbarkeit
+
+---
+
+## Wissenslücken
+
+Nicht jeder Fehler ist ein Formulierungsfehler. Kennt ein Lektorats-Skill die
+Zitierregel eines bestimmten Verlags nicht, kennt ein Code-Skill die tatsächliche
+Signatur einer internen API nicht, dann hilft keine Umformulierung: es fehlt
+eine **Tatsache**, kein Verhalten.
+
+Der Loop erkennt solche Fälle und **erfindet die Antwort nicht**. Er meldet sie
+als Frage. Das ist der ganze Umfang der aktuellen Ausbaustufe: erkennen und
+fragen. Wissen aufnehmen, ablegen und pflegen beschreibt `PLAN-wissen-v1.md`
+als Phase 2 bis 4; nichts davon ist implementiert, und der Loop schreibt
+deshalb keinen Wissensbestand und legt im Ziel-Skill nichts an.
+
+**Warum nicht einfach die Referenzdatei schreiben lassen.** Der Mutationstyp
+`reference_add` existiert seit v2, und der Mutator würde die Datei aus dem
+Modellgedächtnis füllen. Eine plausibel klingende erfundene Tatsache besteht
+Assertions und einen LLM-Judge oft besser als eine sperrige richtige. Das Gate
+fängt sie also nicht, sondern belohnt sie. Ein Loop, der auf diesem Weg Wissen
+ergänzt, misst sich selbst ein gutes Zeugnis aus.
+
+### Ablauf
+
+1. Der Hypothesis-Agent klassifiziert ein Failure-Pattern als `KNOWLEDGE_GAP`
+   (agents/hypothesis.md, Abschnitt 2c) und liefert statt einer Mutation einen
+   `knowledge_request` mit vier Feldern: `question`, `why_needed`,
+   `answer_shape`, `eval_ids`.
+2. Der Orchestrator nimmt die Frage auf:
+
+```bash
+python3 scripts/knowledge.py gap-append <workspace>/knowledge-gaps.jsonl \
+  --from-json <workspace>/experiments/exp-<NNN>/hypothesis.json \
+  --experiment exp-<NNN>
+```
+
+   Exit 1 heisst: Belegpflicht nicht erfüllt oder ein Pflichtfeld fehlt. Dann
+   ist die Entscheidung `SKIP`, nicht `DEFERRED`: es liegt keine brauchbare
+   Frage vor.
+
+3. Kein Snapshot, kein Mutator, kein Eval-Run, kein Scoring. Entscheidung
+   `DEFERRED`, Kategorie `knowledge`, weiter zur nächsten Hypothese. Der Lauf
+   endet deswegen nicht.
+4. Der Morning Report führt die offenen Fragen in einem eigenen Abschnitt auf.
+
+### Warum der Auto-Modus dabei nicht blockiert
+
+Ein Overnight-Lauf kann niemanden fragen. Blockierte er, stünde der Loop still.
+Beantwortete er selbst, erfände er Fakten. `DEFERRED` ist der dritte Weg: die
+Frage wird gestellt und aufgeschrieben, der Loop arbeitet an Formulierung und
+Determinismus weiter.
+
+Das ist nicht der Verlegenheitsausgang, sondern das eigentliche Ergebnis: **Der
+Lauf liefert morgens nicht nur einen besseren Skill, sondern eine kurze Liste
+präziser Fragen, die der Mensch in fünf Minuten beantwortet.** Ein Loop, der
+sagt „ich komme hier nicht weiter, weil mir genau das fehlt", ist wertvoller als
+einer, der die Lücke füllt und einen grünen Score meldet.
+
+Im Guided-Modus kann der User die Frage sofort beantworten oder verwerfen,
+statt bis zum Report zu warten.
+
+### Regeln
+
+- **Belegpflicht.** Mindestens zwei train-Evals müssen das Muster zeigen,
+  nachgewiesen über `eval_ids`, nicht über einen Zähler. `gap-append` erzwingt
+  das. Ausnahme nur mit `single_eval_accepted` plus Begründung.
+- **Nur train.** Wissenslücken werden ausschliesslich aus dem train-Split
+  abgeleitet, wie jede andere Hypothese auch. Sonst leckt der Holdout.
+- **Ein Gap pro Experiment** (`max_knowledge_gaps_per_experiment`). Der Loop
+  soll Wissen erwerben, nicht Fragebögen produzieren.
+- **Deckel pro Lauf** (`max_deferred_per_run`, Default 3). Danach wird
+  `knowledge` deprioritisiert. Ohne den Deckel läuft eine Nacht durch, ohne eine
+  einzige Mutation zu erzeugen.
+- **Keine Frage zweimal.** `gap-append` dedupliziert über die normalisierte
+  Frage. Eine als `rejected` verworfene Frage bleibt gesperrt.
+- **Beantwortet ist nicht dasselbe wie offen.** Steht eine Frage auf `answered`
+  oder `sourced` und ihr Fehlermuster tritt wieder auf, fehlt nicht das Wissen,
+  sondern der Verweis darauf. Das ist ein `SKILL_DEFECT` und wird als normale
+  Mutation behandelt.
+
+### Fragen beantworten
+
+```bash
+# Stand ansehen
+python3 scripts/knowledge.py gap-list <workspace>/knowledge-gaps.jsonl --status open
+python3 scripts/knowledge.py gap-stats <workspace>/knowledge-gaps.jsonl
+
+# Beantworten oder verwerfen
+python3 scripts/knowledge.py gap-resolve <workspace>/knowledge-gaps.jsonl gap-003 \
+  --status answered --resolved-by "<Quelle oder Person>" --note "<Antwort>"
+python3 scripts/knowledge.py gap-resolve <workspace>/knowledge-gaps.jsonl gap-004 \
+  --status rejected --note "betrifft uns nicht"
+```
+
+`knowledge-gaps.jsonl` ist append-only: `gap-resolve` überschreibt nichts,
+sondern hängt einen neuen Stand an, und der letzte Datensatz je `gap_id` gilt.
+Wie lange eine Frage offen war, bleibt damit nachlesbar. Die Datei liegt aus
+demselben Grund neben der History wie `rejected.jsonl`: die
+History-Kompaktierung würde eine offene Frage sonst nach fünf Experimenten
+wegkürzen.
+
+Bis Phase 2 verwertet der Loop die Antwort nicht automatisch. Was der Mensch
+aus ihr macht — eine Regel in `FORGE_KEEP`, eine Referenzdatei, ein Eval —,
+entscheidet er selbst.
 
 ---
 
@@ -1300,7 +1434,9 @@ vorher aus.
 | `agents/mutator.md` | Mutation mit Begründung (Skill + Generic) |
 | `agents/meta.md` | Meta-Memory über Edit-Qualität, alle 5 Experimente |
 | `agents/scorer.md` | LLM-as-Judge Bewertung (nur Skill-Modus) |
+| `PLAN-wissen-v1.md` | Plan für Wissenserkennung, -beschaffung und -pflege; Phase 1 ist umgesetzt |
 | `scripts/composite_score.py` | Scoring, Entscheidung (`decide`), Snapshot/Revert, TSV-Logging, History-Compaction, Checkpoint, Grouping |
+| `scripts/knowledge.py` | Wissenslücken-Queue: melden, deduplizieren, auflösen, rendern |
 | `tests/` | Testsuite für Entscheidung, Scoring, Coverage, Snapshot/Revert, History |
 | `conftest.py` | pytest-Konfiguration im Repo-Root (macht `scripts/` importierbar) |
 | `templates/morning_report.md` | Report-Template mit Coverage-Sektion |

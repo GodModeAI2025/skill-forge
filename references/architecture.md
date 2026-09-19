@@ -434,9 +434,11 @@ Spätphase (8+):    Exploitation ██░░░░░░░░  20%
 Sättigungsregel: Eine Kategorie ist saturiert nach ≥3 gemessenen Experimenten
 ohne Verbesserung >0.01. Saturierte Kategorien werden deprioritisiert.
 
-Gemessen heisst KEEP, REVERT oder NEUTRAL. INVALID, SKIP und NO_OP zählen nicht
-mit, sonst gilt eine Kategorie als abgegrast, obwohl dort nie eine Zahl entstanden
-ist. Der Status wird bei jedem Update neu berechnet und nicht nur gesetzt: vorher
+Gemessen heisst KEEP, REVERT oder NEUTRAL. INVALID, SKIP, NO_OP und DEFERRED
+zählen nicht mit, sonst gilt eine Kategorie als abgegrast, obwohl dort nie eine
+Zahl entstanden ist. Bei der Kategorie `knowledge` wiegt das besonders schwer:
+sie würde nach drei unbeantworteten Fragen als erledigt gelten, obwohl noch kein
+einziger Versuch gemessen wurde. Der Status wird bei jedem Update neu berechnet und nicht nur gesetzt: vorher
 rastete `saturated` ein und löste sich auch nach einem späteren Treffer nie
 wieder.
 

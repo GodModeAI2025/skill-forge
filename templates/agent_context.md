@@ -40,6 +40,15 @@ Gerendert mit `rejected-format <workspace>/rejected.jsonl --limit 10`. Enthält
 alle Nicht-KEEP-Entscheidungen im Wortlaut, Near-Misses als markierte
 Teilmenge.
 
+## Offene Wissensfragen
+
+{knowledge_gaps_block}
+
+Gerendert mit `knowledge.py gap-format <workspace>/knowledge-gaps.jsonl --limit 10`.
+Diese Lücken sind bereits gemeldet. Keine davon erneut stellen. Steht eine Frage
+auf `answered` oder `sourced` und das Fehlermuster tritt trotzdem wieder auf,
+fehlt nicht das Wissen, sondern der Verweis darauf — das ist ein `SKILL_DEFECT`.
+
 ## Bestätigte Muster
 
 {success_patterns}

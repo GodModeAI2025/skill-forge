@@ -63,10 +63,17 @@ Zum Typ: `best_delta` und `delta` sind hier Zahlen. In der
   "failure_summary": [
     {"pattern": "string", "count": 2, "eval_ids": ["..."],
      "severity": "high | medium | low",
-     "failure_class": "SKILL_DEFECT | EXECUTION_LAPSE"}
+     "failure_class": "SKILL_DEFECT | EXECUTION_LAPSE | KNOWLEDGE_GAP"}
   ],
   "success_patterns": ["string"],
   "appendix_notes": ["string"],
+  "knowledge_request": {
+    "question": "string",
+    "why_needed": "string",
+    "answer_shape": "string",
+    "eval_ids": ["..."],
+    "domain": "string"
+  } | null,
   "support_count": 2,
   "single_eval_accepted": false,
   "source_type": "failure | success",
@@ -164,30 +171,96 @@ Fehleranalysator ist ein monotoner Regelanhäufer ohne Vergessensmechanismus.
 Nur train. Die bestandenen val- und test-Evals siehst du nicht, sonst leckt der
 Holdout über diesen Block ins Skill.
 
-### 2c. Defect-vs-Lapse-Klassifikation
+### 2c. Fehlerklassifikation: Lapse, Wissenslücke, Defekt
 
-Klassifiziere JEDES Failure-Pattern, bevor du nach der Ursache suchst. Die
-Diskriminierungsfrage lautet:
+Klassifiziere JEDES Failure-Pattern, bevor du nach der Ursache suchst. Drei
+Klassen, als Kaskade in genau dieser Reihenfolge geprüft.
 
-> Gibt es im aktuellen Skill eine Regel, die diesen Fehler verhindert hätte,
-> wenn der Agent sie befolgt hätte?
+**Frage 1: Gibt es im aktuellen Skill eine Regel, die diesen Fehler verhindert
+hätte, wenn der Agent sie befolgt hätte?**
 
-- **Nein** → `SKILL_DEFECT`. Die Regel fehlt oder ist zu vage. Normaler Weg:
-  Hypothese, Mutation, Gate.
 - **Ja** → `EXECUTION_LAPSE`. Die Regel stand da und wurde ignoriert. Das
   erzeugt **keine** Body-Mutation, sondern eine Zeile in `appendix_notes`.
+- **Nein** → weiter zu Frage 2.
 
-**Bei echter Unsicherheit: EXECUTION_LAPSE.** Der Default ist bewusst
-asymmetrisch. Eine gültige Regel wird nicht wegen eines einmaligen
-Ausrutschers umgeschrieben oder gelöscht. In Kombination mit der
-Auflösungsgrenze wäre der Schaden unsichtbar: der Score-Unterschied eines
-einzelnen Ausrutschers liegt unterhalb dessen, was das Gate messen kann, die
-korrekte Regel wäre trotzdem weg.
+**Frage 2: Hätte eine perfekt formulierte Anweisung gereicht — oder braucht die
+richtige Antwort eine Tatsache, die im Skill nicht steht und die der Agent
+nicht zuverlässig herleiten kann?**
+
+- **Tatsache nötig** → `KNOWLEDGE_GAP`. Es fehlt Wissen, nicht Klarheit. Das
+  erzeugt **keine** Mutation, sondern einen `knowledge_request`.
+- **Anweisung hätte gereicht** → `SKILL_DEFECT`. Die Regel fehlt oder ist zu
+  vage. Normaler Weg: Hypothese, Mutation, Gate.
+
+Vier mechanische Marker für Frage 2, damit sie nicht zur Geschmackssache wird.
+Je mehr zutreffen, desto eher `KNOWLEDGE_GAP`:
+
+1. Die gescheiterte Assertion prüft einen **Wert** — Name, Zahl, Norm,
+   Signatur, Frist, Bezeichnung —, keine **Form** wie Struktur, Reihenfolge,
+   Ton oder Länge.
+2. Der Agent hat im Transcript etwas **konkret behauptet**, das falsch war,
+   statt die Aufgabe formal falsch zu erledigen. Erfundene Spezifik ist das
+   stärkste Einzelsignal.
+3. Die Antworten **streuen über Runs**: derselbe Prompt, drei verschiedene
+   erfundene Werte. Ein Formfehler ist stabil, eine Wissenslücke würfelt.
+4. Der Agent hat im Transcript **gesucht** und nichts gefunden.
+
+**Bei echter Unsicherheit: nie `KNOWLEDGE_GAP`.** Der Default ist doppelt
+asymmetrisch — gegen Wissenslücke und, wie bisher, zugunsten von
+`EXECUTION_LAPSE`, wenn die Regel schon dasteht. Begründung: Der Wissenszweig
+ist der teuerste der drei. Er unterbricht den Menschen, belegt dauerhaft
+Budget und erzeugt Pflegeaufwand. Eine als Wissenslücke fehlklassifizierte
+Formulierungsschwäche kostet eine Nachtrunde und eine überflüssige Frage im
+Morning Report; umgekehrt kostet ein normaler REVERT nichts weiter.
+
+**Höchstens ein `KNOWLEDGE_GAP` pro Experiment**
+(`max_knowledge_gaps_per_experiment`, Default 1). Der Loop soll Wissen
+erwerben, nicht Fragebögen produzieren.
+
+Die Support-Regel aus Abschnitt 6 gilt für Wissenslücken unverkürzt:
+mindestens zwei train-Evals müssen das Muster zeigen, nachgewiesen über
+`eval_ids`, nicht über einen Zähler. `scripts/knowledge.py` erzwingt das und
+weist eine Frage mit einem einzigen Beleg zurück.
 
 `appendix_notes` landen über `appendix-append` in der geschützten Region
 `<!-- FORGE_APPENDIX_START -->`. Sie umgehen das Gate, deshalb sind sie auf 15
 gedeckelt, und deshalb sind sie kurz: eine Zeile, die den konkreten Ausrutscher
 benennt, keine neue Regel.
+
+### 2d. Wissenslücke melden statt raten
+
+Hast du ein Muster als `KNOWLEDGE_GAP` klassifiziert, ist die Ausgabe dieser
+Runde ein `knowledge_request` — und **keine** Mutation. Vier Felder:
+
+| Feld | Inhalt |
+|---|---|
+| `question` | Was genau fehlt. Eine Frage, kein Themengebiet |
+| `why_needed` | Woran du es gemerkt hast, mit Zahlen: "3/4 train-Evals mit Beleg im Text failen `beleg_kurzform`" |
+| `answer_shape` | Wie eine brauchbare Antwort aussieht |
+| `eval_ids` | Die train-Evals, die das Muster zeigen |
+
+`answer_shape` ist kein Beiwerk. Es ist der Unterschied zwischen einer Frage,
+die der Mensch morgens in dreissig Sekunden beantwortet, und einer, die er
+wegklickt. "Eine Regel: Kurzbeleg oder Vollbeleg, plus Ausnahmen" ist
+brauchbar; "Infos zum Zitierstil" ist es nicht.
+
+**Prüfe zuerst die Liste offener Fragen** in deinem Kontext (Abschnitt
+"Offene Wissensfragen", gerendert aus `knowledge-gaps.jsonl`). Drei Fälle:
+
+- Die Frage steht dort als `open` oder `conflict` → stelle sie nicht erneut.
+  Wähle einen anderen Kandidaten.
+- Die Frage steht dort als `rejected` → der Mensch hat sie als irrelevant
+  verworfen. Nie erneut stellen.
+- Die Frage steht dort als `answered` oder `sourced`, und das Fehlermuster
+  tritt trotzdem wieder auf → dann fehlt nicht das Wissen, sondern der Verweis
+  darauf. Das ist ein `SKILL_DEFECT`, und die Mutation richtet sich auf die
+  Stelle, an der der Agent auf den Bestand gestossen werden müsste.
+
+**Du erfindest die Antwort nicht.** Auch nicht als markierte Zwischenlösung,
+auch nicht "hilfsweise". Eine plausibel klingende erfundene Tatsache besteht
+Assertions und einen LLM-Judge oft besser als eine sperrige richtige; das Gate
+fängt sie also nicht. Die einzige korrekte Reaktion auf eine Wissenslücke ohne
+Quelle ist, sie als Frage zu melden.
 
 ### 3. Root-Cause-Analyse
 
@@ -200,6 +273,9 @@ Für die Top-3 Probleme, suche nach der Ursache:
 - **Tool Gap**: Ein Script/Template fehlt das der Agent bräuchte
 - **Instruction Conflict**: Zwei Anweisungen widersprechen sich
 - **Instruction Overload**: Zu viele Anweisungen, Agent verliert den Fokus
+- **Knowledge Gap**: Dem Agenten fehlt eine Tatsache, die er nicht herleiten
+  kann. Keine Formulierung behebt das. Führt zu `knowledge_request`, nicht zu
+  einer Mutation
 
 **Generic-Modus Root Causes:**
 - **Inefficient Algorithm**: Algorithmus hat suboptimale Komplexität
@@ -358,7 +434,7 @@ Beschreibe konkret, was geändert werden soll:
 | `script_add` | Helper-Script erstellen | Agent schreibt immer wieder den gleichen Code |
 | `script_fix` | Bestehendes Script reparieren | Script hat Bugs oder wird nicht korrekt aufgerufen |
 | `structure_change` | Abschnitte umorganisieren | Informationen sind am falschen Ort |
-| `reference_add` | Zusätzliche Doku/Referenz | Agent braucht Domänenwissen |
+| `reference_add` | Zusätzliche Doku/Referenz | Agent braucht Struktur oder Vorlage — **nicht** für fehlende Fakten, dafür `knowledge_request` |
 | `prune` | Unnötiges entfernen | Skill ist zu lang, Agent verliert Fokus |
 | `config_change` | Build-/Test-/Lint-Config anpassen | Nur Generic-Modus |
 | `refactor` | Code umstrukturieren ohne Funktionsänderung | Nur Generic-Modus |

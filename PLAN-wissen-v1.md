@@ -4,6 +4,12 @@ Stand: 2026-09-19. Betrifft ausschließlich `skill-forge`. SkillSafe wird als
 Konzept übernommen, nicht als Abhängigkeit und nicht durch eine Änderung an
 jenem Repository.
 
+**Umsetzungsstand:** Phase 1 (erkennen und fragen) ist implementiert — dritte
+Fehlerklasse `KNOWLEDGE_GAP`, `knowledge-gaps.jsonl`, `scripts/knowledge.py`,
+die Entscheidung `DEFERRED`, der Report-Abschnitt und 32 Tests. Phase 2 bis 5
+sind offen; die vier Fragen in Abschnitt 13 sind unbeantwortet und blockieren
+Phase 2.
+
 ---
 
 ## 1. Das Problem
@@ -207,7 +213,7 @@ Ein Eintrag:
   "tried_sources": ["S-0001", "X-0001"],
   "status": "open",
   "resolved_by": null,
-  "created": "2026-09-19T02:14:00Z"
+  "created_at": "2026-09-19T02:14:00Z"
 }
 ```
 

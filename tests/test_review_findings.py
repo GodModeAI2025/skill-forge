@@ -261,7 +261,7 @@ def test_the_default_categories_are_written(tmp_path):
     init_coverage_matrix(str(path))
     matrix = json.loads(path.read_text())
     assert sorted(matrix["categories"]) == sorted(DEFAULT_SKILL_CATEGORIES)
-    assert len(DEFAULT_SKILL_CATEGORIES) == 8
+    assert len(DEFAULT_SKILL_CATEGORIES) == 9
 
 
 def test_coverage_percent_counts_touched_not_saturated(tmp_path):

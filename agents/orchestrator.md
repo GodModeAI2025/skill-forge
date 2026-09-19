@@ -24,7 +24,11 @@ Vor jedem Agent-Aufruf:
    - **Runde 4-7**: Balanced (50/50 Exploration/Exploitation)
    - **Runde 8+**: Exploitation (80% erfolgreiche Kategorien vertiefen)
 4. Sammle Near-Miss-Hypothesen aus `decision.json` Dateien
-5. Hänge den gefüllten Context an den Agent-Prompt an
+5. Rendere die offenen Wissensfragen:
+   `python3 scripts/knowledge.py gap-format <workspace>/knowledge-gaps.jsonl --limit 10`
+   Ohne diesen Block stellt der Hypothesis-Agent jede Nacht dieselbe Frage und
+   verbraucht den DEFERRED-Deckel mit Duplikaten.
+6. Hänge den gefüllten Context an den Agent-Prompt an
 
 ### 2. Agent-Übergabe-Protokoll
 
@@ -36,6 +40,11 @@ Orchestrator
     ├─▶ Hypothesis Agent
     │     Input:  history_grouped + history_recent + coverage + near_misses + context
     │     Output: hypothesis.json (validiert gegen Output Schema)
+    │
+    ├─▶ [Wissensweiche] hypothesis.json enthält knowledge_request?
+    │     ja   → knowledge.py gap-append, Decision DEFERRED, kein Mutator,
+    │            kein Snapshot, kein Eval-Run, nächste Hypothese
+    │     nein → weiter zum Mutator
     │
     ├─▶ Mutator Agent
     │     Input:  hypothesis.json + target_path + snapshot_dir + context
@@ -97,6 +106,12 @@ ohne Wirkung.
   `failure_class`
 - `support_count >= 2`, sonst ist `single_eval_accepted` gesetzt und
   `generalizability` begründet den Einzelfall
+- höchstens ein `failure_summary`-Eintrag trägt `failure_class: KNOWLEDGE_GAP`
+  (`max_knowledge_gaps_per_experiment`)
+- ist `knowledge_request` gesetzt, ist `mutation` leer oder wird ignoriert, und
+  alle vier Felder `question`, `why_needed`, `answer_shape`, `eval_ids` sind
+  gefüllt. Die eigentliche Prüfung macht `knowledge.py gap-append`; sie bricht
+  mit Exit 1 ab, statt eine unbrauchbare Frage aufzunehmen
 
 **Mutator-Output:**
 - `files_changed` ist eine nicht leere Liste
@@ -126,14 +141,71 @@ Der Orchestrator trifft Entscheidungen die über einzelne Agenten hinausgehen:
 - **Experiment-Abbruch**: Wenn der Mutator einen Sanity-Check-Fehler meldet → SKIP
 - **Loop-Abbruch**: Wenn 3+ SKIPs hintereinander → Loop stoppen, Report generieren
 - **Plateau**: 3 aufeinanderfolgende Nicht-KEEP-Entscheidungen (also jede Mischung aus
-  REVERT und NEUTRAL, near_miss zählt nicht als Ausnahme) gelten als Plateau →
+  REVERT und NEUTRAL, near_miss zählt nicht als Ausnahme; `DEFERRED` wird vor dem
+  Fenster herausgefiltert und füllt es auch nicht auf) gelten als Plateau →
   Loop stoppen, Report generieren. Geprüft wird das mit `python3 scripts/composite_score.py plateau <history> --window 3`
   beziehungsweise `is_plateau(decisions,
   window=3)` in `composite_score.py`. Das frühere Kriterium sah nur auf
   NEUTRAL/REVERT und griff deshalb kaum.
+- **Wissensweiche**: Liefert der Hypothesis-Agent einen `knowledge_request`,
+  läuft diese Runde ohne Mutation. Ablauf in Abschnitt 4.5.
+- **Deferred-Deckel**: `max_deferred_per_run` (Default 3) begrenzt, wie oft ein
+  Lauf eine Frage statt einer Mutation liefert. Ist er erreicht, wird die
+  Kategorie `knowledge` für den Rest des Laufs deprioritisiert und der Loop
+  arbeitet an Formulierung und Determinismus weiter. Ohne den Deckel läuft eine
+  Nacht durch, ohne eine einzige Mutation zu erzeugen.
 - **Eval-Rotation**: Nach 5 Experimenten: Neue Eval-Queries generieren lassen
 - **Phase-Transition**: Bei Übergang von Exploration → Balanced → Exploitation:
   Log-Eintrag schreiben, Strategie im Context anpassen
+
+### 4.5. Die Wissensweiche
+
+Trägt `hypothesis.json` einen `knowledge_request`, hat der Hypothesis-Agent
+keine Mutation vorgeschlagen, sondern eine Frage gestellt. Diese Runde misst
+nichts. Ablauf, in dieser Reihenfolge:
+
+1. Frage aufnehmen:
+
+```bash
+python3 scripts/knowledge.py gap-append <workspace>/knowledge-gaps.jsonl \
+  --from-json <workspace>/experiments/exp-<NNN>/hypothesis.json \
+  --experiment exp-<NNN>
+```
+
+   Exit 1 heisst: die Frage erfüllt die Belegpflicht nicht (unter zwei
+   `eval_ids` ohne begründete Ausnahme) oder ein Pflichtfeld fehlt. Dann ist
+   die Entscheidung `SKIP`, nicht `DEFERRED` — es liegt keine brauchbare Frage
+   vor, die der Mensch morgens beantworten könnte.
+
+2. Ist `created: false` und `unresolved: true`, war die Frage schon gestellt.
+   Keine neue Zeile, keine neue Entscheidung: zurück zur nächsten Hypothese.
+   Ist `created: false` und der Status `answered` oder `sourced`, erreicht das
+   vorhandene Wissen den Agenten nicht — dann ist das ein `SKILL_DEFECT` und
+   gehört als normale Mutation behandelt, nicht als Wissenslücke.
+
+3. Kein Snapshot, kein Mutator, kein Eval-Run, kein Scoring. Es gibt nichts zu
+   sichern und nichts zu messen.
+
+4. Entscheidung `DEFERRED` in `decision.json`, mit `gap_id` und der Frage im
+   Wortlaut, und in beide Logs:
+
+```bash
+python3 scripts/composite_score.py tsv-append <workspace>/experiment-log.tsv \
+  --experiment exp-<NNN> --hypothesis "<Frage, gekürzt>" \
+  --before <baseline> --after <baseline> --decision DEFERRED \
+  --category knowledge --duration <s>
+
+python3 scripts/composite_score.py coverage-update <workspace>/coverage-matrix.json \
+  --category knowledge --experiment exp-<NNN> --decision DEFERRED --delta 0.0
+```
+
+   `--before` und `--after` sind derselbe Wert: es wurde nichts gemessen, und
+   ein Delta ungleich null wäre eine erfundene Zahl. `DEFERRED` zählt nicht in
+   die Sättigung, nicht in `best_delta` und nicht ins Plateau-Fenster.
+
+5. Deferred-Zähler erhöhen und gegen `max_deferred_per_run` prüfen.
+
+6. Weiter mit der nächsten Hypothese. Der Lauf endet deswegen nicht.
 
 ### 5. Checkpoint-Management
 

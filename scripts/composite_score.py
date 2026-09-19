@@ -447,7 +447,18 @@ def min_detectable_delta(total_assertions: int, flips: int = 2) -> float:
 # ─── Entscheidung ─────────────────────────────────────────────────────────
 
 
-DECISIONS = ("KEEP", "REVERT", "NEUTRAL", "SKIP", "NO_OP", "INVALID")
+DECISIONS = (
+    "KEEP", "REVERT", "NEUTRAL", "SKIP", "NO_OP", "INVALID", "DEFERRED",
+)
+
+# Entscheidungen, die aus einer Messung stammen. Nur sie zählen in die
+# Sättigung einer Kategorie und in best_delta.
+MEASURED_DECISIONS = ("KEEP", "REVERT", "NEUTRAL")
+
+# DEFERRED: Der Hypothesis-Agent hat eine Wissenslücke erkannt und keine
+# freigegebene Quelle gefunden, die sie schliesst. Es gab keine Mutation und
+# keine Messung, sondern eine Frage an den Menschen (knowledge-gaps.jsonl).
+# Der Wert kommt wie SKIP, INVALID und NO_OP aus dem Ablauf, nie aus decide().
 
 IMPROVEMENT_THRESHOLD = 0.02
 REGRESSION_THRESHOLD = 0.05
@@ -621,10 +632,27 @@ def is_plateau(decisions: list, window: int = 3) -> bool:
     Die alte Formulierung ("3 aufeinanderfolgende NEUTRAL/REVERT") liess
     NEAR_MISS ausser Acht, und NEAR_MISS war durch die kaputte Kaskade der
     häufigste Ausgang. Ein Lauf im mittleren Band brach deshalb nie ab.
+
+    ``DEFERRED`` wird vor dem Fenster herausgefiltert, nicht als Nicht-KEEP
+    gezählt und auch nicht als Streak-Unterbrechung behandelt. Ein deferriertes
+    Experiment hat nichts gemessen: Es hat eine Wissenslücke gemeldet und eine
+    Frage gestellt. Zählte es mit, beendete eine Serie unbeantworteter Fragen
+    den Lauf, obwohl keine einzige Hypothese gescheitert ist. Unterbräche es
+    die Serie, verhinderte eine eingestreute Frage jede Plateau-Erkennung.
+    Herausfiltern ist der einzige Ausgang, der beides vermeidet.
+
+    ``SKIP``, ``INVALID`` und ``NO_OP`` zählen bewusst weiter mit: dort ist
+    etwas kaputt oder wirkungslos, und drei davon in Folge sind ein Grund
+    anzuhalten. Bei DEFERRED ist nichts kaputt, das Mittel dagegen liegt beim
+    Menschen und nicht im Loop.
+
+    Der eigene Deckel für DEFERRED ist ``max_deferred_per_run``; er wird im
+    Orchestrator geführt, nicht hier.
     """
-    if len(decisions) < window:
+    considered = [d for d in decisions if d != "DEFERRED"]
+    if len(considered) < window:
         return False
-    return all(d != "KEEP" for d in decisions[-window:])
+    return all(d != "KEEP" for d in considered[-window:])
 
 
 # ─── TSV-Logging ──────────────────────────────────────────────────────────
@@ -709,6 +737,7 @@ DEFAULT_SKILL_CATEGORIES = [
     "efficiency",
     "scripts",
     "structure",
+    "knowledge",
 ]
 
 
@@ -790,7 +819,7 @@ def update_coverage_matrix(
         matrix_path: Pfad zur coverage-matrix.json
         category: Kategorie des Experiments
         experiment_id: ID des Experiments
-        decision: KEEP, REVERT, NEUTRAL, SKIP, NO_OP oder INVALID
+        decision: KEEP, REVERT, NEUTRAL, SKIP, NO_OP, INVALID oder DEFERRED
         delta: Score-Delta des Experiments (roh, in Metrik-Einheiten)
         saturation_threshold: Min. Experimente für Sättigung
         saturation_min_delta: Min. Verbesserung um nicht saturiert zu sein
@@ -805,8 +834,11 @@ def update_coverage_matrix(
        schlimmste Regression als Bestwert und lenkte den Hypothesis-Agent
        systematisch in die falsche Kategorie.
 
-    INVALID, SKIP und NO_OP zählen nicht in die Sättigung. Sonst gilt eine
-    Kategorie als abgegrast, obwohl sie nie wirklich gemessen wurde.
+    INVALID, SKIP, NO_OP und DEFERRED zählen nicht in die Sättigung. Sonst gilt
+    eine Kategorie als abgegrast, obwohl sie nie wirklich gemessen wurde. Bei
+    DEFERRED wiegt das besonders schwer: die Kategorie ``knowledge`` würde nach
+    drei unbeantworteten Fragen als erledigt gelten, obwohl noch kein einziger
+    Claim im Bestand liegt.
     """
     path = Path(matrix_path)
     with open(path, "r") as f:
@@ -830,10 +862,10 @@ def update_coverage_matrix(
         cat["experiments_reverted"] += 1
     elif decision == "NEUTRAL":
         cat["experiments_neutral"] += 1
-    elif decision in ("INVALID", "SKIP", "NO_OP"):
+    elif decision in ("INVALID", "SKIP", "NO_OP", "DEFERRED"):
         cat["experiments_invalid"] += 1
 
-    counted = decision in ("KEEP", "REVERT", "NEUTRAL")
+    counted = decision in MEASURED_DECISIONS
 
     # Best Delta aktualisieren, richtungsbewusst und nur für gemessene Läufe
     oriented = delta if direction == "higher_is_better" else -delta
@@ -2970,10 +3002,13 @@ def main():
         history = json.loads(Path(args.history_path).read_text())
         decisions = [e.get("decision") for e in history.get("experiments", [])]
         reached = is_plateau(decisions, window=args.window)
+        considered = [d for d in decisions if d != "DEFERRED"]
+        deferred = len(decisions) - len(considered)
         print(json.dumps({
             "plateau": reached,
             "window": args.window,
-            "last_decisions": decisions[-args.window:],
+            "last_decisions": considered[-args.window:],
+            "deferred_skipped": deferred,
             "reason": (
                 "%d aufeinanderfolgende Nicht-KEEP" % args.window if reached
                 else "kein Plateau"

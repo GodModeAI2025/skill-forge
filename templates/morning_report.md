@@ -13,12 +13,16 @@
 | Experimente | {total_experiments} | Crashes: {crashes} | Zeit: {total_duration} |
 
 **Entscheidungen:** KEEP {keeps} · REVERT {reverts} · NEUTRAL {neutrals} (davon
-near_miss: {near_misses}) · INVALID/SKIP/NO_OP {invalids}
+near_miss: {near_misses}) · INVALID/SKIP/NO_OP {invalids} · DEFERRED {deferred}
 
 NEUTRAL heisst zurückgerollt, wie REVERT. Der Unterschied ist die Begründung: bei
 REVERT hat die Mutation messbar geschadet, bei NEUTRAL war nichts messbar.
 `near_miss` markiert die NEUTRAL-Fälle knapp unterhalb der Keep-Schwelle, also die
 Kandidaten für eine Variation.
+
+`DEFERRED` heisst: der Loop hat eine Wissenslücke erkannt und keine Quelle
+gefunden, die sie schliesst. Es gab keine Mutation und keine Messung, sondern
+eine Frage. Sie steht weiter unten unter "Offene Wissensfragen".
 
 **Gate-Gewichtung:** {gate_weights}
 
@@ -58,8 +62,38 @@ Score
 
 **Unberührte Bereiche:** {untouched_categories}
 
-INVALID fasst INVALID, SKIP und NO_OP zusammen und zählt nicht in die Sättigung.
-Eine Kategorie mit drei INVALID-Läufen ist unberührt, nicht abgegrast.
+INVALID fasst INVALID, SKIP, NO_OP und DEFERRED zusammen und zählt nicht in die
+Sättigung. Eine Kategorie mit drei INVALID-Läufen ist unberührt, nicht
+abgegrast. Für `knowledge` gilt das besonders: drei unbeantwortete Fragen
+heissen, dass noch nichts versucht wurde, nicht dass nichts zu holen ist.
+
+## Offene Wissensfragen
+
+{knowledge_gaps_block}
+
+**Das ist der Teil des Reports mit dem besten Verhältnis aus Aufwand und
+Wirkung.** Jede Frage hier ist ein Fehler, den keine Umformulierung behebt: dem
+Skill fehlt eine Tatsache. Der Loop hat sie nicht erfunden, sondern stehen
+lassen und belegt, woran er sie gemerkt hat. Beantworten kostet pro Frage
+typischerweise unter einer Minute; jede Antwort steht dem nächsten Lauf zur
+Verfügung.
+
+Antworten oder verwerfen:
+
+```bash
+python3 scripts/knowledge.py gap-resolve {workspace_path}/knowledge-gaps.jsonl \
+  gap-003 --status answered --resolved-by "<Quelle oder Person>" --note "<Antwort>"
+
+python3 scripts/knowledge.py gap-resolve {workspace_path}/knowledge-gaps.jsonl \
+  gap-004 --status rejected --note "betrifft uns nicht"
+```
+
+Eine verworfene Frage wird nie erneut gestellt. Eine beantwortete auch nicht:
+taucht ihr Fehlermuster wieder auf, behandelt der nächste Lauf es als
+Verweis-Problem, nicht als Wissenslücke.
+
+Stand: {gap_open} offen · {gap_answered} beantwortet · {gap_rejected} verworfen
+(`knowledge.py gap-stats {workspace_path}/knowledge-gaps.jsonl`)
 
 ## Effizienz
 

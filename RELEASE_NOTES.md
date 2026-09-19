@@ -1,8 +1,8 @@
 # Release Notes
 
-## Unreleased: Rauschgrenze gemessen, Metrik markiert
+## Unreleased: Rauschgrenze gemessen, Metrik markiert, Wissenslücken erkannt
 
-_Versionsnummer vergibt der Owner beim Release; Stand 2026-09-16._
+_Versionsnummer vergibt der Owner beim Release; Stand 2026-09-19._
 
 **`noise_floor` war ein Platzhalter.** Der Key ging in die Keep-Schwelle ein,
 stand aber immer auf 0.0, und `architecture.md` führte das als offene
@@ -27,7 +27,57 @@ Anregung für beides: das Projekt autoresearch-with-claude-code
 schnellen Workloads den Median mehrerer Läufe melden lässt. Kein Code
 übernommen.
 
-12 neue Tests, 283 insgesamt.
+12 neue Tests.
+
+**Der Loop kannte fehlendes Wissen nicht als Fehlerursache.** Die
+Klassifikation kannte zwei Klassen, `SKILL_DEFECT` und `EXECUTION_LAPSE`, und
+beide setzen voraus, dass der Agent die Aufgabe lösen könnte, wenn man ihm nur
+klar genug sagt wie. Fehlt eine Tatsache — eine Zitierregel, eine API-Signatur,
+eine Frist —, stimmt das nicht, und der Fall landete als `SKILL_DEFECT`: der
+Mutator bekam den Auftrag, eine bereits präzise Anweisung zu schärfen. Der
+Mutationstyp `reference_add` trug seit v2 die Beschreibung „Agent braucht
+Domänenwissen", ohne dass es einen Weg gab, dieses Wissen zu beschaffen — der
+Mutator hätte die Referenzdatei aus dem Modellgedächtnis gefüllt. Genau dort
+entstehen selbstbewusste Falschaussagen, und das Gate fängt sie nicht, sondern
+belohnt sie: eine plausibel klingende Erfindung besteht Assertions und einen
+LLM-Judge oft besser als eine sperrige Wahrheit.
+
+Neu ist die dritte Klasse `KNOWLEDGE_GAP` mit vier mechanischen Markern
+(Assertion prüft einen Wert statt einer Form; der Agent hat konkret etwas
+Falsches behauptet; die Antworten streuen über Runs; der Agent hat gesucht und
+nichts gefunden). Der Default ist asymmetrisch gegen sie: der Wissenszweig ist
+der teuerste der drei, weil er einen Menschen unterbricht. Statt einer Mutation
+erzeugt ein solcher Befund eine Frage in `knowledge-gaps.jsonl` und die
+Entscheidung `DEFERRED`.
+
+**`DEFERRED` blockiert den Auto-Modus nicht.** Ein Overnight-Lauf kann niemanden
+fragen. Blockierte er, stünde der Loop still; antwortete er selbst, erfände er
+Fakten. Stattdessen wird die Frage aufgeschrieben, der Loop arbeitet an
+Formulierung und Determinismus weiter, und der Morning Report führt die offenen
+Fragen in einem eigenen Abschnitt. Der Lauf liefert damit nicht nur einen
+besseren Skill, sondern eine kurze Liste präziser Fragen.
+
+**Plateau-Erkennung filtert `DEFERRED` heraus, statt es zu zählen.** Beide
+naheliegenden Alternativen sind falsch: zählte es als Nicht-KEEP, beendete eine
+Serie unbeantworteter Fragen den Lauf, obwohl keine einzige Hypothese
+gescheitert ist; unterbräche es die Serie, verhinderte eine eingestreute Frage
+alle drei Runden jede Plateau-Erkennung. Herausfiltern vermeidet beides, und es
+füllt das Fenster auch nicht auf: zwei gemessene Nicht-KEEP plus eine Frage sind
+kein Plateau. `SKIP`, `INVALID` und `NO_OP` zählen weiter mit — dort ist etwas
+kaputt, und drei davon in Folge sind ein Grund anzuhalten.
+
+Die Belegpflicht erzwingt `scripts/knowledge.py`, nicht der Prompt: eine Frage
+mit weniger als zwei `eval_ids` wird mit Exit 1 abgewiesen, und Dedup über die
+normalisierte Frage verhindert, dass derselbe Punkt jede Nacht neu gestellt
+wird. Eine als `rejected` verworfene Frage bleibt gesperrt; eine bereits
+beantwortete, deren Fehlermuster wiederkehrt, ist kein Wissensproblem mehr,
+sondern ein fehlender Verweis — also ein `SKILL_DEFECT`.
+
+Das ist Phase 1 aus `PLAN-wissen-v1.md`: erkennen und fragen, ohne jeden
+Schreibzugriff auf einen Wissensbestand. Wissen entgegennehmen, evidenzgebunden
+ablegen und pflegen sind Phase 2 bis 4 und sind nicht implementiert.
+
+32 neue Tests. Die Suite steht damit bei 316.
 
 ## v3.4 (2026-07-29): Härtung nach der adversarialen Review
 
